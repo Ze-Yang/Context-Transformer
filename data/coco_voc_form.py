@@ -23,73 +23,32 @@ else:
     import xml.etree.ElementTree as ET
 
 
-VOC_CLASSES = ( '__background__', # always index 0
-    'aeroplane', 'bicycle', 'bird', 'boat',
-    'bottle', 'bus', 'car', 'cat', 'chair',
-    'cow', 'diningtable', 'dog', 'horse',
-    'motorbike', 'person', 'pottedplant',
-    'sheep', 'sofa', 'train', 'tvmonitor')
+COCO_CLASSES = ( '__background__', # always index 0
+                # 1-10
+                'truck', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter',
+                'bench', 'elephant', 'bear', 'zebra', 'giraffe',
+                # 11-20
+                'backpack', 'umbrella', 'handbag', 'tie', 'suitcase',
+                'frisbee', 'skis', 'snowboard', 'sports ball', 'kite',
+                # 21-30
+                'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+                'wine glass', 'cup', 'fork', 'knife', 'spoon',
+                # 31-40
+                'bowl', 'banana', 'apple', 'sandwich', 'orange',
+                'broccoli', 'carrot', 'hot dog', 'pizza', 'donut',
+                # 41-50
+                'cake', 'bed', 'toilet','laptop', 'mouse',
+                'remote', 'keyboard', 'cell phone', 'microwave', 'oven',
+                # 51-60
+                'toaster', 'sink', 'refrigerator', 'book', 'clock',
+                'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush')
 
 # for making bounding boxes pretty
 COLORS = ((255, 0, 0, 128), (0, 255, 0, 128), (0, 0, 255, 128),
           (0, 255, 255, 128), (255, 0, 255, 128), (255, 255, 0, 128))
 
 
-class VOCSegmentation(data.Dataset):
-
-    """VOC Segmentation Dataset Object
-    input and target are both images
-
-    NOTE: need to address https://github.com/pytorch/vision/issues/9
-
-    Arguments:
-        root (string): filepath to VOCdevkit folder.
-        image_set (string): imageset to use (eg: 'train', 'val', 'test').
-        transform (callable, optional): transformation to perform on the
-            input image
-        target_transform (callable, optional): transformation to perform on the
-            target image
-        dataset_name (string, optional): which dataset to load
-            (default: 'VOC2007')
-    """
-
-    def __init__(self, root, image_set, transform=None, target_transform=None,
-                 dataset_name='VOC2007'):
-        self.root = root
-        self.image_set = image_set
-        self.transform = transform
-        self.target_transform = target_transform
-
-        self._annopath = os.path.join(
-            self.root, dataset_name, 'SegmentationClass', '%s.png')
-        self._imgpath = os.path.join(
-            self.root, dataset_name, 'JPEGImages', '%s.jpg')
-        self._imgsetpath = os.path.join(
-            self.root, dataset_name, 'ImageSets', 'Segmentation', '%s.txt')
-
-        with open(self._imgsetpath % self.image_set) as f:
-            self.ids = f.readlines()
-        self.ids = [x.strip('\n') for x in self.ids]
-
-    def __getitem__(self, index):
-        img_id = self.ids[index]
-
-        target = Image.open(self._annopath % img_id).convert('RGB')
-        img = Image.open(self._imgpath % img_id).convert('RGB')
-
-        if self.transform is not None:
-            img = self.transform(img)
-
-        if self.target_transform is not None:
-            target = self.target_transform(target)
-
-        return img, target
-
-    def __len__(self):
-        return len(self.ids)
-
-
-class AnnotationTransform(object):
+class COCO_AnnotationTransform(object):
 
     """Transforms a VOC annotation into a Tensor of bbox coords and label index
     Initilized with a dictionary lookup of classnames to indexes
@@ -105,7 +64,7 @@ class AnnotationTransform(object):
 
     def __init__(self, class_to_ind=None, keep_difficult=True):
         self.class_to_ind = class_to_ind or dict(
-            zip(VOC_CLASSES, range(len(VOC_CLASSES))))
+            zip(COCO_CLASSES, range(len(COCO_CLASSES))))
         self.keep_difficult = keep_difficult
 
     def __call__(self, target):
@@ -116,7 +75,7 @@ class AnnotationTransform(object):
         Returns:
             a list containing lists of bounding boxes  [bbox coords, class name]
         """
-        res = np.empty((0,5)) 
+        res = np.empty((0,5))
         for obj in target.iter('object'):
             difficult = int(obj.find('difficult').text) == 1
             if not self.keep_difficult and difficult:
@@ -139,7 +98,7 @@ class AnnotationTransform(object):
         return res  # [[xmin, ymin, xmax, ymax, label_ind], ... ]
 
 
-class VOCDetection(data.Dataset):
+class COCODetection(data.Dataset):
 
     """VOC Detection Dataset Object
 
@@ -157,8 +116,8 @@ class VOCDetection(data.Dataset):
             (default: 'VOC2007')
     """
 
-    def __init__(self, root, image_sets, preproc=None, target_transform=None,
-                 dataset_name='VOC0712', n_shot_task=1):
+    def __init__(self, root, image_sets, preproc=None, target_transform=None, n_support=1, n_query=10,
+                 dataset_name='COCO60', phase='train'):
         self.root = root
         self.image_set = image_sets
         self.preproc = preproc
@@ -167,27 +126,76 @@ class VOCDetection(data.Dataset):
         self._annopath = os.path.join('%s', 'Annotations', '%s.xml')
         self._imgpath = os.path.join('%s', 'JPEGImages', '%s.jpg')
         self.ids = list()
-        for (year, name) in image_sets:
-            self._year = year
-            rootpath = os.path.join(self.root, 'VOC' + year)
-            for line in open(os.path.join(rootpath, 'ImageSets', 'Main', name + '_' + str(n_shot_task) + 'shot.txt')):
-                self.ids.append((rootpath, line.strip()))
+        self.split_index = list()
+        self.n_support = n_support
+        self.n_query = n_query
+        self.phase = phase
+        if phase == 'train' or phase == 'test_support':
+            idx = 0
+            for cls in COCO_CLASSES[1:]:
+                self.split_index.append(idx)
+                for (year, name) in image_sets:
+                    for line in open(os.path.join(self.root, 'ImageSets', 'Main', cls + '_' + name + '_det.txt')):
+                        self.ids.append((self.root, line.strip()))
+                        idx += 1
+            self.split_index.append(idx)
+        elif phase == 'test_query':
+            for (year, name) in image_sets:
+                self._year = year
+                for line in open(os.path.join(self.root, 'ImageSets', 'Main', name + '.txt')):
+                    self.ids.append((self.root, line.strip()))
+        # for (year, name) in image_sets:
+        #     for line in open(os.path.join(self.root, 'ImageSets', 'Main', name + '.txt')):
+        #         self.ids.append((self.root, line.strip()))
+        # pass
 
     def __getitem__(self, index):
-        img_id = self.ids[index]
-        target = ET.parse(self._annopath % img_id).getroot()
-        img = cv2.imread(self._imgpath % img_id, cv2.IMREAD_COLOR)
 
-        if self.target_transform is not None:
-            target = self.target_transform(target)
+        indexes = self.split_index[index] + \
+                 np.random.permutation(self.split_index[index+1]-self.split_index[index])[:(self.n_support + self.n_query)]
+        img_ids = [self.ids[i] for i in indexes]
+        imgs = []
+        targets = []
+        for img_id in img_ids:
+            target = ET.parse(self._annopath % img_id).getroot()
+            img = cv2.imread(self._imgpath % img_id, cv2.IMREAD_COLOR)
 
-        if self.preproc is not None:
-            img, target = self.preproc(img, target)
+            if self.target_transform is not None:
+                target = self.target_transform(target)
+                # ensure that groundtruth boxes with pos labels get priority during match
+                idx = np.where(target[:, -1] == index + 1)
+                tmp = target[idx]
+                target = np.delete(target, idx, axis=0)
+                target = np.concatenate((target, tmp), axis=0)
+                if self.phase == 'train':
+                    filter = target[:, -1] != index+1
+                    target[filter, -1] = -1        # set the labels that are not belongs to this class to -1
 
-        return img, target
+            if self.preproc is not None:
+                # img, target = self.preproc(img, target)
+                img, target = self.preproc(img, target, index)
+            imgs.append(img)
+            targets.append(target)
+        imgs = torch.stack(imgs, 0)
+        support_imgs = imgs[:self.n_support]
+        query_imgs = imgs[self.n_support:]
+        support_targets = targets[:self.n_support]
+        query_targets = targets[self.n_support:]
+
+        if self.phase == 'test_support':
+            return {'s_img': support_imgs, 's_target': support_targets}
+        elif self.phase == 'train':
+            return {'s_img': support_imgs, 's_target': support_targets, 'q_img': query_imgs, 'q_target': query_targets}
+        else:
+            print('The input phase is not applicable!')
 
     def __len__(self):
-        return len(self.ids)
+        if self.phase == 'train' or self.phase == 'test_support':
+            return len(COCO_CLASSES) - 1
+        elif self.phase == 'test_query':
+            return len(self.ids)
+        else:
+            print('The input phase is not applicable!')
 
     def pull_image(self, index):
         '''Returns the original image object at index in PIL form
@@ -249,18 +257,18 @@ class VOCDetection(data.Dataset):
     def _get_voc_results_file_template(self):
         filename = 'comp4_det_test' + '_{:s}.txt'
         filedir = os.path.join(
-            self.root, 'results', 'VOC' + self._year, 'Main')
+            self.root, 'results', 'COCO' + self._year, 'Main') # "../data/COCO60/results/COCO2014/Main"
         if not os.path.exists(filedir):
             os.makedirs(filedir)
         path = os.path.join(filedir, filename)
         return path
 
     def _write_voc_results_file(self, all_boxes):
-        for cls_ind, cls in enumerate(VOC_CLASSES):
+        for cls_ind, cls in enumerate(COCO_CLASSES):
             if cls == '__background__':
                 continue
-            print('Writing {} VOC results file'.format(cls))
-            filename = self._get_voc_results_file_template().format(cls)
+            print('Writing {} COCO results file'.format(cls))
+            filename = self._get_voc_results_file_template().format(cls) # "../data/COCO60/results/COCO2014/Main"
             with open(filename, 'wt') as f:
                 for im_ind, index in enumerate(self.ids):
                     index = index[1]
@@ -274,25 +282,24 @@ class VOCDetection(data.Dataset):
                                 dets[k, 2] + 1, dets[k, 3] + 1))
 
     def _do_python_eval(self, output_dir='output'):
-        rootpath = os.path.join(self.root, 'VOC' + self._year)
         name = self.image_set[0][1]
         annopath = os.path.join(
-                                rootpath,
+                                self.root,
                                 'Annotations',
                                 '{:s}.xml')
         imagesetfile = os.path.join(
-                                rootpath,
+                                self.root,
                                 'ImageSets',
                                 'Main',
                                 name+'.txt')
-        cachedir = os.path.join(self.root, 'annotations_cache')
+        cachedir = os.path.join(self.root, 'annotations_cache') # "../data/COCO60/annotations_cache"
         aps = []
         # The PASCAL VOC metric changed in 2010
-        use_07_metric = True if int(self._year) < 2010 else False
+        use_07_metric = True # if int(self._year) < 2010 else False
         print('VOC07 metric? ' + ('Yes' if use_07_metric else 'No'))
         if output_dir is not None and not os.path.isdir(output_dir):
             os.mkdir(output_dir)
-        for i, cls in enumerate(VOC_CLASSES):
+        for i, cls in enumerate(COCO_CLASSES):
 
             if cls == '__background__':
                 continue
@@ -333,15 +340,30 @@ def detection_collate(batch):
             1) (tensor) batch of images stacked on their 0 dim
             2) (list of tensors) annotations for a given image are stacked on 0 dim
     """
-    targets = []
-    imgs = []
+    s_imgs = []
+    s_targets = []
+    q_imgs = []
+    q_targets = []
     for _, sample in enumerate(batch):
-        for _, tup in enumerate(sample):
-            if torch.is_tensor(tup):
-                imgs.append(tup)
-            elif isinstance(tup, type(np.empty(0))):
-                annos = torch.from_numpy(tup).float()
-                targets.append(annos)
+        s_imgs.append(sample['s_img'])
+        q_imgs.append(sample['q_img'])
+        annos = [torch.from_numpy(i).float() for i in sample['s_target']]
+        s_targets.append(annos)
+        annos = [torch.from_numpy(i).float() for i in sample['q_target']]
+        q_targets.append(annos)
 
-    return (torch.stack(imgs, 0), targets)
+    return (torch.stack(s_imgs, 0), s_targets, torch.stack(q_imgs, 0), q_targets)
 
+
+class EpisodicBatchSampler(data.Sampler):
+    def __init__(self, n_classes, n_way, n_episodes):
+        self.n_classes = n_classes
+        self.n_way = n_way
+        self.n_episodes = n_episodes  # 100
+
+    def __len__(self):
+        return self.n_episodes
+
+    def __iter__(self):
+        for i in range(self.n_episodes):
+            yield torch.randperm(self.n_classes)[:self.n_way].tolist()

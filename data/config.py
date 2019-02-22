@@ -1,14 +1,16 @@
 # config.py
 import os.path
 
-# gets home dir cross platform
-home = os.path.expanduser("~")
-ddir = os.path.join(home,"data/VOCdevkit/")
+# # gets home dir cross platform
+# home = os.path.expanduser("~")
+# ddir = os.path.join(home,"data/VOCdevkit/")
+#
+# # note: if you used our download scripts, this should be right
+# VOCroot = ddir # path to VOCdevkit root dir
+# COCOroot = os.path.join(home,"data/COCO/")
 
-# note: if you used our download scripts, this should be right
-VOCroot = ddir # path to VOCdevkit root dir
-COCOroot = os.path.join(home,"data/COCO/")
-
+VOCroot = "../data/VOCdevkit/"
+COCOroot = "../data/COCO60/"
 
 #RFB CONFIGS
 VOC_300 = {

@@ -1,68 +1,60 @@
-# --------------------------------------------------------
-# Fast/er R-CNN
-# Licensed under The MIT License [see LICENSE for details]
-# Written by Bharath Hariharan
-# --------------------------------------------------------
-
-import xml.etree.ElementTree as ET
+from __future__ import print_function
 import os
 import pickle
+import argparse
+from data import VOCroot
+from data import VOC_AnnotationTransform, VOCDetection
+from data.voc0712_meta import VOC_CLASSES
+from data.coco_voc_form import COCO_CLASSES
+from data.voc_eval import voc_eval
 import numpy as np
 
+parser = argparse.ArgumentParser(description='Receptive Field Block Net')
+parser.add_argument('-d', '--dataset', default='VOC',
+                    help='VOC or COCO version')
+parser.add_argument('-r1', '--result1', type=str, help='Directory of result1 to compare')
+parser.add_argument('-r2', '--result2', type=str, help='Directory of result2 to compare')
+parser.add_argument('-c', '--cls_ind', default=1, type=int, help='')
+parser.add_argument('--save_folder', default='eval/', type=str,
+                    help='Dir to save results')
+args = parser.parse_args()
 
-def parse_rec(filename):
-    """ Parse a PASCAL VOC xml file """
-    tree = ET.parse(filename)
-    objects = []
-    for obj in tree.findall('object'):
-        obj_struct = {}
-        obj_struct['name'] = obj.find('name').text
-        obj_struct['pose'] = obj.find('pose').text
-        obj_struct['truncated'] = int(obj.find('truncated').text)
-        obj_struct['difficult'] = int(obj.find('difficult').text)
-        bbox = obj.find('bndbox')
-        obj_struct['bbox'] = [int(bbox.find('xmin').text),
-                              int(bbox.find('ymin').text),
-                              int(bbox.find('xmax').text),
-                              int(bbox.find('ymax').text)]
-        objects.append(obj_struct)
-
-    return objects
+def pr_curve_visualize():
+    import matplotlib.pyplot as plt
 
 
+    save_folder1 = os.path.join(args.save_folder, args.result1)
+    save_folder2 = os.path.join(args.save_folder, args.result2)
+    det_file1 = os.path.join(save_folder1, cls + '_pr.pkl')
+    det_file2 = os.path.join(save_folder2, cls + '_pr.pkl')
+    with open(det_file1,'rb') as f:
+        result1 = pickle.load(f)
+    with open(det_file2,'rb') as f:
+        result2 = pickle.load(f)
+    fig = plt.figure()
+    fig.suptitle(cls)
+    plt.plot(result1['rec'], result1['prec'], 'b', result2['rec'], result2['prec'], 'r')
+    plt.show()
+    pass
 
-def voc_ap(rec, prec, use_07_metric=False):
-    """ ap = voc_ap(rec, prec, [use_07_metric])
-    Compute VOC AP given precision and recall.
-    If use_07_metric is true, uses the
-    VOC 07 11 point method (default:False).
-    """
-    if use_07_metric:
-        # 11 point metric
-        ap = 0.
-        for t in np.arange(0., 1.1, 0.1):
-            if np.sum(rec >= t) == 0:
-                p = 0
-            else:
-                p = np.max(prec[rec >= t])
-            ap = ap + p / 11.
-    else:
-        # correct AP calculation
-        # first append sentinel values at the end
-        mrec = np.concatenate(([0.], rec, [1.]))
-        mpre = np.concatenate(([0.], prec, [0.]))
+def do_python_eval(cls):
+    rootpath = os.path.join(root, 'VOC' + year)
+    name = 'test'
+    annopath = os.path.join(
+        rootpath,
+        'Annotations',
+        '{:s}.xml')
+    imagesetfile = os.path.join(
+        rootpath,
+        'ImageSets',
+        'Main',
+        name + '.txt')
+    cachedir = os.path.join(root, 'annotations_cache')
+    filename = get_voc_results_file_template().format(cls)
+    rec, prec, ap = voc_eval(
+        filename, annopath, imagesetfile, cls, cachedir, ovthresh=0.5,
+        use_07_metric=True)
 
-        # compute the precision envelope
-        for i in range(mpre.size - 1, 0, -1):
-            mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
-
-        # to calculate area under PR curve, look for points
-        # where X axis (recall) changes value
-        i = np.where(mrec[1:] != mrec[:-1])[0]
-
-        # and sum (\Delta recall) * prec
-        ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
-    return ap
 
 def voc_eval(detpath,
              annopath,
@@ -100,27 +92,15 @@ def voc_eval(detpath,
     if not os.path.isdir(cachedir):
         os.mkdir(cachedir)
     cachefile = os.path.join(cachedir, 'annots.pkl')
+
+    # load
+    with open(cachefile, 'rb') as f:
+        recs = pickle.load(f)
+
     # read list of images
     with open(imagesetfile, 'r') as f:
         lines = f.readlines()
     imagenames = [x.strip() for x in lines]
-
-    if not os.path.isfile(cachefile):
-        # load annots
-        recs = {}
-        for i, imagename in enumerate(imagenames):
-            recs[imagename] = parse_rec(annopath.format(imagename))
-            if i % 100 == 0:
-                print('Reading annotation for {:d}/{:d}'.format(
-                    i + 1, len(imagenames)))
-        # save
-        print('Saving cached annotations to {:s}'.format(cachefile))
-        with open(cachefile, 'wb') as f:
-            pickle.dump(recs, f)
-    else:
-        # load
-        with open(cachefile, 'rb') as f:
-            recs = pickle.load(f)
 
     # extract gt objects for this class
     class_recs = {}
@@ -191,8 +171,8 @@ def voc_eval(detpath,
         else:
             fp[d] = 1.
 
-        # BBGT = BBGT if BBGT.size == 0 else BBGT[jmax, :]
-        # det_visualize(classname, image_ids[d], sorted_scores[d], bb, BBGT, tp[d], fp[d], ovmax > ovthresh)
+        BBGT = BBGT if BBGT.size == 0 else BBGT[jmax, :]
+        det_visualize(classname, image_ids[d], sorted_scores[d], bb, BBGT, tp[d], fp[d], ovmax > ovthresh)
 
     # compute precision recall
     fp = np.cumsum(fp)
@@ -201,15 +181,14 @@ def voc_eval(detpath,
     # avoid divide by zero in case the first detection matches a difficult
     # ground truth
     prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
-    ap = voc_ap(rec, prec, use_07_metric)
 
-    return rec, prec, ap
+    return rec, prec
 
 def det_visualize(cls, img_id, conf, bb, BBGT, tp, fp, is_ov):
     import cv2
     import matplotlib.pyplot as plt
-    from .voc0712_meta import VOC_CLASSES
-    from .coco_voc_form import COCO_CLASSES
+    from data.voc0712_meta import VOC_CLASSES
+    from data.coco_voc_form import COCO_CLASSES
     if cls in VOC_CLASSES:
         dataset = 'VOC'
     elif cls in COCO_CLASSES:
@@ -243,3 +222,21 @@ def det_visualize(cls, img_id, conf, bb, BBGT, tp, fp, is_ov):
         fig.suptitle(cls + '_not overlap_' + str(conf))
     plt.imshow(img)
     plt.show()
+
+def get_voc_results_file_template():
+    filename = 'comp4_det_test' + '_{:s}.txt'
+    filedir = os.path.join(
+        root, 'results', args.dataset + year, 'Main')
+    if not os.path.exists(filedir):
+        os.makedirs(filedir)
+    path = os.path.join(filedir, filename)
+    return path
+
+
+if __name__ == '__main__':
+
+    root = '../data/VOCdevkit' if args.dataset == 'VOC' else '../data/COCO60'
+    year = '2007' if args.dataset == 'VOC' else '2014'
+    cls = (VOC_CLASSES, COCO_CLASSES)[args.dataset == 'COCO'][args.cls_ind]
+    # pr_curve_visualize()
+    do_python_eval(cls)

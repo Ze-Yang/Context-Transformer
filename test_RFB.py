@@ -10,7 +10,7 @@ import torchvision.transforms as transforms
 import numpy as np
 from torch.autograd import Variable
 from data import VOCroot,COCOroot 
-from data import AnnotationTransform, COCODetection, VOCDetection, BaseTransform, VOC_300,VOC_512,COCO_300,COCO_512, COCO_mobile_300
+from data import VOC_AnnotationTransform, COCODetection, VOCDetection, BaseTransform, VOC_300,VOC_512,COCO_300,COCO_512, COCO_mobile_300
 
 import torch.utils.data as data
 from layers.functions import Detect,PriorBox
@@ -25,7 +25,7 @@ parser.add_argument('-s', '--size', default='300',
                     help='300 or 512 input size.')
 parser.add_argument('-d', '--dataset', default='VOC',
                     help='VOC or COCO version')
-parser.add_argument('-m', '--trained_model', default='weights/RFB300_80_5.pth',
+parser.add_argument('-m', '--trained_model', default='weights/RFB_vgg_VOC_epoches_190.pth',
                     type=str, help='Trained state_dict file path to open')
 parser.add_argument('--save_folder', default='eval/', type=str,
                     help='Dir to save results')
@@ -47,6 +47,7 @@ else:
 
 if args.version == 'RFB_vgg':
     from models.RFB_Net_vgg import build_net
+    # from models.RFB_Net_vgg_add_feature_layer import build_net
 elif args.version == 'RFB_E_vgg':
     from models.RFB_Net_E_vgg import build_net
 elif args.version == 'RFB_mobile':
@@ -95,10 +96,10 @@ def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image
 
         _t['im_detect'].tic()
         out = net(x)      # forward pass
-        boxes, scores = detector.forward(out,priors)
+        boxes, scores = detector.forward(out, priors)
         detect_time = _t['im_detect'].toc()
-        boxes = boxes[0]
-        scores=scores[0]
+        boxes = boxes[0] # percent and point form detection boxes
+        scores = scores[0] # [1, num_priors, 21]
 
         boxes *= scale
         boxes = boxes.cpu().numpy()
@@ -147,7 +148,7 @@ if __name__ == '__main__':
     # load net
     img_dim = (300,512)[args.size=='512']
     num_classes = (21, 81)[args.dataset == 'COCO']
-    net = build_net('test', img_dim, num_classes)    # initialize detector
+    net = build_net('test', img_dim, num_classes-1)    # initialize detector
     state_dict = torch.load(args.trained_model)
     # create new OrderedDict that does not contain `module.`
 

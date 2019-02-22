@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="PublishConfigData" autoUpload="Always" serverName="xychen@172.20.36.224:22" showAutoUploadSettingsWarning="false">
+    <serverData>
+      <paths name="xychen@172.20.36.224:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/media/data1/xychen/RFBNet" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="zeyang@139.180.201.193:10146">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/zeyang/RFBNet" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="zeyang@154.8.218.119:47">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/media/sde/zeyang/RFBNet" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="zeyang@154.8.218.119:63">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/zeyang/RFBNet" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="zeyang@172.20.36.146:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/zeyang/RFBNet" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/home/zeyang/ssd.pytorch" local="$PROJECT_DIR$/../ssd.pytorch" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="zeyang@172.20.36.47:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/media/sde/zeyang/RFBNet" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="zeyang@172.20.36.63:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/zeyang/RFBNet" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="zeyang@192.168.3.102:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/zeyang/RFBNet" local="$PROJECT_DIR$" />
+          </mappings>
+        </serverdata>
+      </paths>
+    </serverData>
+    <option name="myAutoUpload" value="ALWAYS" />
+  </component>
+</project>

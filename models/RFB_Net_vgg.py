@@ -25,7 +25,7 @@ class BasicConv(nn.Module):
             x = self.relu(x)
         return x
 
-
+# RFB
 class BasicRFB(nn.Module):
 
     def __init__(self, in_planes, out_planes, stride=1, scale = 0.1, visual = 1):
@@ -39,7 +39,7 @@ class BasicRFB(nn.Module):
                 )
         self.branch1 = nn.Sequential(
                 BasicConv(in_planes, inter_planes, kernel_size=1, stride=1),
-                BasicConv(inter_planes, 2*inter_planes, kernel_size=(3,3), stride=stride, padding=(1,1)),
+                BasicConv(inter_planes, 2*inter_planes, kernel_size=3, stride=stride, padding=1),
                 BasicConv(2*inter_planes, 2*inter_planes, kernel_size=3, stride=1, padding=visual+1, dilation=visual+1, relu=False)
                 )
         self.branch2 = nn.Sequential(
@@ -51,7 +51,7 @@ class BasicRFB(nn.Module):
 
         self.ConvLinear = BasicConv(6*inter_planes, out_planes, kernel_size=1, stride=1, relu=False)
         self.shortcut = BasicConv(in_planes, out_planes, kernel_size=1, stride=stride, relu=False)
-        self.relu = nn.ReLU(inplace=False)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self,x):
         x0 = self.branch0(x)
@@ -67,14 +67,14 @@ class BasicRFB(nn.Module):
         return out
 
 
-
+# RFB-s
 class BasicRFB_a(nn.Module):
 
     def __init__(self, in_planes, out_planes, stride=1, scale = 0.1):
         super(BasicRFB_a, self).__init__()
         self.scale = scale
         self.out_channels = out_planes
-        inter_planes = in_planes //4
+        inter_planes = in_planes // 4
 
 
         self.branch0 = nn.Sequential(
@@ -88,19 +88,19 @@ class BasicRFB_a(nn.Module):
                 )
         self.branch2 = nn.Sequential(
                 BasicConv(in_planes, inter_planes, kernel_size=1, stride=1),
-                BasicConv(inter_planes, inter_planes, kernel_size=(1,3), stride=stride, padding=(0,1)),
+                BasicConv(inter_planes, inter_planes, kernel_size=(1,3), stride=stride, padding=(0,1)), # stride一旦不取1,feature map无法concat
                 BasicConv(inter_planes, inter_planes, kernel_size=3, stride=1, padding=3, dilation=3, relu=False)
                 )
         self.branch3 = nn.Sequential(
                 BasicConv(in_planes, inter_planes//2, kernel_size=1, stride=1),
                 BasicConv(inter_planes//2, (inter_planes//4)*3, kernel_size=(1,3), stride=1, padding=(0,1)),
-                BasicConv((inter_planes//4)*3, inter_planes, kernel_size=(3,1), stride=stride, padding=(1,0)),
+                BasicConv((inter_planes//4)*3, inter_planes, kernel_size=(3,1), stride=stride, padding=(1,0)), # stride一旦不取1,feature map无法concat
                 BasicConv(inter_planes, inter_planes, kernel_size=3, stride=1, padding=5, dilation=5, relu=False)
                 )
 
         self.ConvLinear = BasicConv(4*inter_planes, out_planes, kernel_size=1, stride=1, relu=False)
-        self.shortcut = BasicConv(in_planes, out_planes, kernel_size=1, stride=stride, relu=False)
-        self.relu = nn.ReLU(inplace=False)
+        self.shortcut = BasicConv(in_planes, out_planes, kernel_size=1, stride=stride, relu=False) # stride一旦不取1,feature map无法concat
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self,x):
         x0 = self.branch0(x)
@@ -154,6 +154,7 @@ class RFBNet(nn.Module):
 
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
+        self.obj = nn.ModuleList(head[2])
         if self.phase == 'test':
             self.softmax = nn.Softmax(dim=-1)
 
@@ -180,6 +181,7 @@ class RFBNet(nn.Module):
         sources = list()
         loc = list()
         conf = list()
+        obj = list()
 
         # apply vgg up to conv4_3 relu
         for k in range(23):
@@ -194,30 +196,34 @@ class RFBNet(nn.Module):
 
         # apply extra layers and cache source layer outputs
         for k, v in enumerate(self.extras):
-            x = v(x)
+            x = v(x)                             # 包括ReLu了,是一个小module
             if k < self.indicator or k%2 ==0:
                 sources.append(x)
 
         # apply multibox head to source layers
-        for (x, l, c) in zip(sources, self.loc, self.conf):
+        for (x, l, c, o) in zip(sources, self.loc, self.conf, self.obj):
             loc.append(l(x).permute(0, 2, 3, 1).contiguous())
             conf.append(c(x).permute(0, 2, 3, 1).contiguous())
+            obj.append(o(x).permute(0, 2, 3, 1).contiguous())
 
         #print([o.size() for o in loc])
 
 
-        loc = torch.cat([o.view(o.size(0), -1) for o in loc], 1)
+        loc = torch.cat([o.view(o.size(0), -1) for o in loc], 1) # 把所有的feature map的输出拼合起来
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
+        obj = torch.cat([o.view(o.size(0), -1) for o in obj], 1)
 
         if self.phase == "test":
             output = (
                 loc.view(loc.size(0), -1, 4),                   # loc preds
                 self.softmax(conf.view(-1, self.num_classes)),  # conf preds
+                self.softmax(obj.view(-1, 2))
             )
         else:
             output = (
                 loc.view(loc.size(0), -1, 4),
                 conf.view(conf.size(0), -1, self.num_classes),
+                obj.view(obj.size(0), -1, 2),
             )
         return output
 
@@ -263,20 +269,18 @@ base = {
 }
 
 
-def add_extras(size, cfg, i, batch_norm=False):
+def add_extras(size, cfg, in_channels, batch_norm=False): # in_channels = 1024
     # Extra layers added to VGG for feature scaling
     layers = []
-    in_channels = i
-    flag = False
     for k, v in enumerate(cfg):
         if in_channels != 'S':
             if v == 'S':
                 if in_channels == 256 and size == 512:
-                    layers += [BasicRFB(in_channels, cfg[k+1], stride=2, scale = 1.0, visual=1)]
+                    layers += [BasicRFB(in_channels, cfg[k+1], stride=2, scale=1.0, visual=1)]
                 else:
-                    layers += [BasicRFB(in_channels, cfg[k+1], stride=2, scale = 1.0, visual=2)]
+                    layers += [BasicRFB(in_channels, cfg[k+1], stride=2, scale=1.0, visual=2)]
             else:
-                layers += [BasicRFB(in_channels, v, scale = 1.0, visual=2)]
+                layers += [BasicRFB(in_channels, v, scale=1.0, visual=2)]
         in_channels = v
     if size == 512:
         layers += [BasicConv(256,128,kernel_size=1,stride=1)]
@@ -300,20 +304,24 @@ extras = {
 def multibox(size, vgg, extra_layers, cfg, num_classes):
     loc_layers = []
     conf_layers = []
-    vgg_source = [-2]
+    obj_layers = []
+    vgg_source = [-2] # vgg网络的倒数第二层
     for k, v in enumerate(vgg_source):
         if k == 0:
             loc_layers += [nn.Conv2d(512,
                                  cfg[k] * 4, kernel_size=3, padding=1)]
-            conf_layers +=[nn.Conv2d(512,
+            conf_layers += [nn.Conv2d(512,
                                  cfg[k] * num_classes, kernel_size=3, padding=1)]
+            obj_layers += [nn.Conv2d(512,
+                                 cfg[k] * 2, kernel_size=3, padding=1)]
         else:
             loc_layers += [nn.Conv2d(vgg[v].out_channels,
                                  cfg[k] * 4, kernel_size=3, padding=1)]
             conf_layers += [nn.Conv2d(vgg[v].out_channels,
                         cfg[k] * num_classes, kernel_size=3, padding=1)]
+            obj_layers += [nn.Conv2d(vgg[v].out_channels,
+                                     cfg[k] * 2, kernel_size=3, padding=1)]
     i = 1
-    indicator = 0
     if size == 300:
         indicator = 3
     elif size == 512:
@@ -323,13 +331,15 @@ def multibox(size, vgg, extra_layers, cfg, num_classes):
         return
 
     for k, v in enumerate(extra_layers):
-        if k < indicator or k%2== 0:
+        if k < indicator or k%2 == 0:
             loc_layers += [nn.Conv2d(v.out_channels, cfg[i]
                                  * 4, kernel_size=3, padding=1)]
             conf_layers += [nn.Conv2d(v.out_channels, cfg[i]
                                   * num_classes, kernel_size=3, padding=1)]
-            i +=1
-    return vgg, extra_layers, (loc_layers, conf_layers)
+            obj_layers += [nn.Conv2d(v.out_channels, cfg[i]
+                                 * 2, kernel_size=3, padding=1)]
+            i += 1
+    return vgg, extra_layers, (loc_layers, conf_layers, obj_layers)
 
 mbox = {
     '300': [6, 6, 6, 6, 4, 4],  # number of boxes per feature map location

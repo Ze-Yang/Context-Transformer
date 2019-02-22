@@ -12,9 +12,10 @@ import numpy as np
 import random
 import math
 from utils.box_utils import matrix_iou
+import matplotlib.pyplot as plt
 # import torch_transforms
 
-def _crop(image, boxes, labels):
+def _crop(image, boxes, labels, cls=None):
     height, width, _ = image.shape
 
     if len(boxes)== 0:
@@ -41,39 +42,40 @@ def _crop(image, boxes, labels):
             max_iou = float('inf')
 
         for _ in range(50):
-            scale = random.uniform(0.3,1.)
-            min_ratio = max(0.5, scale*scale)
+            scale = random.uniform(0.3, 1.)
+            min_ratio = max(0.5, scale*scale) # aspect radio
             max_ratio = min(2, 1. / scale / scale)
             ratio = math.sqrt(random.uniform(min_ratio, max_ratio))
             w = int(scale * ratio * width)
             h = int((scale / ratio) * height)
-
-
             l = random.randrange(width - w)
             t = random.randrange(height - h)
             roi = np.array((l, t, l + w, t + h))
 
-            iou = matrix_iou(boxes, roi[np.newaxis])
+            iou = matrix_iou(boxes, roi[np.newaxis]) # roi[1, 4]
             
-            if not (min_iou <= iou.min() and iou.max() <= max_iou):
+            if not (min_iou <= iou.min() and iou.max() <= max_iou): # 至少有一个box满足与roi的overlap在预定范围内
                 continue
 
             image_t = image[roi[1]:roi[3], roi[0]:roi[2]]
-
             centers = (boxes[:, :2] + boxes[:, 2:]) / 2
             mask = np.logical_and(roi[:2] < centers, centers < roi[2:]) \
-                     .all(axis=1)
+                     .all(axis=1)                               # filter out those centers that are out of the roi area
             boxes_t = boxes[mask].copy()
             labels_t = labels[mask].copy()
-            if len(boxes_t) == 0:
-                continue
+            if cls is None:
+                if len(boxes_t) == 0:
+                    continue
+            else:
+                if len(boxes_t) == 0 or (labels_t != (cls+1)).all():
+                    continue
 
             boxes_t[:, :2] = np.maximum(boxes_t[:, :2], roi[:2])
-            boxes_t[:, :2] -= roi[:2]
+            boxes_t[:, :2] -= roi[:2] # 求出新的box在roi中的坐标
             boxes_t[:, 2:] = np.minimum(boxes_t[:, 2:], roi[2:])
-            boxes_t[:, 2:] -= roi[:2]
+            boxes_t[:, 2:] -= roi[:2] # 求出新的box在roi中的坐标
 
-            return image_t, boxes_t,labels_t
+            return image_t, boxes_t, labels_t
 
 
 def _distort(image):
@@ -105,18 +107,18 @@ def _distort(image):
 
     return image
 
-
-def _expand(image, boxes,fill, p):
+def _expand(image, boxes, fill, p):
     if random.random() > p:
         return image, boxes
 
     height, width, depth = image.shape
-    for _ in range(50):
+    # for _ in range(50):
+    while True:
         scale = random.uniform(1,4)
 
         min_ratio = max(0.5, 1./scale/scale)
         max_ratio = min(2, scale*scale)
-        ratio = math.sqrt(random.uniform(min_ratio, max_ratio))
+        ratio = math.sqrt(random.uniform(min_ratio, max_ratio)) # [0.5, 2]
         ws = scale*ratio
         hs = scale/ratio
         if ws < 1 or hs < 1:
@@ -154,12 +156,28 @@ def _mirror(image, boxes):
 def preproc_for_test(image, insize, mean):
     interp_methods = [cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
     interp_method = interp_methods[random.randrange(5)]
-    image = cv2.resize(image, (insize, insize),interpolation=interp_method)
+    image = cv2.resize(image, (insize, insize), interpolation=interp_method)
     image = image.astype(np.float32)
     image -= mean
     return image.transpose(2, 0, 1)
 
+def vis_picture(im):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    # npimg = im.cpu().numpy()
+    #npimg = np.squeeze(npimg, 0)
+    # im = np.transpose(im, (1, 2, 0))
 
+    # im = (im + np.array([104, 117, 123])) / 255
+    im = im[:, :, ::-1] # RGB to BGR
+    #im[:,:,0] = 0
+    # plt.ion()
+    # plt.cla()
+    plt.imshow(im)
+    plt.show()
+
+import numpy as np
+import matplotlib.pyplot as plt
 class preproc(object):
 
     def __init__(self, resize, rgb_means, p):
@@ -167,30 +185,56 @@ class preproc(object):
         self.resize = resize
         self.p = p
 
-    def __call__(self, image, targets):
-        boxes = targets[:,:-1].copy()
-        labels = targets[:,-1].copy()
-        if len(boxes) == 0:
-            #boxes = np.empty((0, 4))
-            targets = np.zeros((1,5))
-            image = preproc_for_test(image, self.resize, self.means)
-            return torch.from_numpy(image), targets
+    def __call__(self, image, targets, cls=None):
+        boxes = targets[:, :-1].copy()
+        labels = targets[:, -1].copy()
+        # if len(boxes) == 0:
+        #     #boxes = np.empty((0, 4))
+        #     targets = np.zeros((1,5))
+        #     image = preproc_for_test(image, self.resize, self.means)
+        #     return torch.from_numpy(image), targets
 
+        # im1 = image[:, :, ::-1]
+        # plt.figure()
+        # plt.subplot(2, 3, 1)
+        # plt.imshow(im1)
+        #######################################################可以共享boxes变成percent的计算过程
+        # 转换成percent, o means origin image
         image_o = image.copy()
         targets_o = targets.copy()
         height_o, width_o, _ = image_o.shape
-        boxes_o = targets_o[:,:-1]
-        labels_o = targets_o[:,-1]
+        boxes_o = targets_o[:, :-1]
+        labels_o = targets_o[:, -1]
         boxes_o[:, 0::2] /= width_o
         boxes_o[:, 1::2] /= height_o
-        labels_o = np.expand_dims(labels_o,1)
+        labels_o = np.expand_dims(labels_o, 1)
         targets_o = np.hstack((boxes_o,labels_o))
+        # print('out image', id(image))
+        if cls is None:
+            image_t, boxes, labels = _crop(image, boxes, labels)
+        else:
+            image_t, boxes, labels = _crop(image, boxes, labels, cls)
+        # print('out image_t', id(image_t))
+        # print(image_t.base is image)
+        # im2 = image_t[:, :, ::-1]
+        # plt.subplot(2, 3, 2)
+        # plt.imshow(im2)
 
-        image_t, boxes, labels = _crop(image, boxes, labels)
-        image_t = _distort(image_t)
+        image_t = _distort(image_t) # 通道经过线性变换,同时改变饱和度
+        # im3 = image_t[:, :, ::-1]
+        # plt.subplot(2, 3, 3)
+        # plt.imshow(im3)
+
         image_t, boxes = _expand(image_t, boxes, self.means, self.p)
+        # im4 = image_t[:, :, ::-1]
+        # plt.subplot(2, 3, 4)
+        # plt.imshow(im4)
+
         image_t, boxes = _mirror(image_t, boxes)
-        #image_t, boxes = _mirror(image, boxes)
+        # im5 = image_t[:, :, ::-1]
+        # plt.subplot(2, 3, 5)
+        # plt.imshow(im5)
+        # plt.show()
 
         height, width, _ = image_t.shape
         image_t = preproc_for_test(image_t, self.resize, self.means)
@@ -199,16 +243,21 @@ class preproc(object):
         boxes[:, 1::2] /= height
         b_w = (boxes[:, 2] - boxes[:, 0])*1.
         b_h = (boxes[:, 3] - boxes[:, 1])*1.
-        mask_b= np.minimum(b_w, b_h) > 0.01
+        mask_b= np.minimum(b_w, b_h) > 0.01 # 处理后的box的长宽最少要占原图像的0.01以上,否则滤去
         boxes_t = boxes[mask_b]
         labels_t = labels[mask_b].copy()
 
-        if len(boxes_t)==0:
-            image = preproc_for_test(image_o, self.resize, self.means)
-            return torch.from_numpy(image),targets_o
+        if cls is None:
+            if len(boxes_t) == 0:
+                image = preproc_for_test(image_o, self.resize, self.means)
+                return torch.from_numpy(image), targets_o
+        else:
+            if len(boxes_t) == 0 or (labels_t != (cls + 1)).all(): #防止被mask之后丢失对应类别的box
+                image = preproc_for_test(image_o, self.resize, self.means)
+                return torch.from_numpy(image), targets_o
 
-        labels_t = np.expand_dims(labels_t,1)
-        targets_t = np.hstack((boxes_t,labels_t))
+        labels_t = np.expand_dims(labels_t, 1)
+        targets_t = np.hstack((boxes_t, labels_t))
 
         return torch.from_numpy(image_t), targets_t
 
@@ -235,7 +284,16 @@ class BaseTransform(object):
         self.swap = swap
 
     # assume input is cv2 img for now
-    def __call__(self, img):
+    def __call__(self, img, target=None):
+
+        if target is not None:
+            height, width, _ = img.shape
+            boxes = target[:, :-1]
+            labels = target[:, -1]
+            boxes[:, 0::2] /= width
+            boxes[:, 1::2] /= height
+            labels = np.expand_dims(labels, 1)
+            targets = np.hstack((boxes, labels))
 
         interp_methods = [cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
         interp_method = interp_methods[0]
@@ -243,4 +301,8 @@ class BaseTransform(object):
                                          self.resize),interpolation = interp_method).astype(np.float32)
         img -= self.means
         img = img.transpose(self.swap)
-        return torch.from_numpy(img)
+
+        if target is not None:
+            return torch.from_numpy(img), targets
+        else:
+            return torch.from_numpy(img)

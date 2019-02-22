@@ -58,7 +58,7 @@ class COCODetection(data.Dataset):
         }
 
         for (year, image_set) in image_sets:
-            coco_name = image_set+year
+            coco_name = image_set+year # train2014
             data_name = (self._view_map[coco_name]
                         if coco_name in self._view_map
                         else coco_name)
@@ -99,7 +99,7 @@ class COCODetection(data.Dataset):
 
     def _get_ann_file(self, name):
         prefix = 'instances' if name.find('test') == -1 \
-                else 'image_info'
+                else 'image_info'                            # 如果name里没有'test',prefix取instances
         return os.path.join(self.root, 'annotations',
                         prefix + '_' + name + '.json')
 

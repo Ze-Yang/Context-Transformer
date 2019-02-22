@@ -8,7 +8,7 @@ if torch.cuda.is_available():
     GPU = True
 
 
-class MultiBoxLoss(nn.Module):
+class MultiBoxLoss_combined(nn.Module):
     """SSD Weighted Loss Function
     Compute Targets:
         1) Produce Confidence Target Indices by matching  ground truth boxes
@@ -33,12 +33,12 @@ class MultiBoxLoss(nn.Module):
 
 
     def __init__(self, num_classes, overlap_thresh, prior_for_matching, bkg_label, neg_mining, neg_pos, neg_overlap, encode_target):
-        super(MultiBoxLoss, self).__init__()
+        super(MultiBoxLoss_combined, self).__init__()
         self.num_classes = num_classes
         self.threshold = overlap_thresh
         self.background_label = bkg_label
         self.encode_target = encode_target
-        self.use_prior_for_matching  = prior_for_matching
+        self.use_prior_for_matching = prior_for_matching
         self.do_neg_mining = neg_mining
         self.negpos_ratio = neg_pos
         self.neg_overlap = neg_overlap
@@ -92,21 +92,33 @@ class MultiBoxLoss(nn.Module):
         pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data)
         loc_p = loc_data[pos_idx].view(-1,4) #整个batch的正样本priors
         loc_t = loc_t[pos_idx].view(-1,4)    #对应的target
-        loss_l = F.smooth_l1_loss(loc_p, loc_t, reduction='elementwise_mean') # size_average=False等价于reduction='sum'
+        loss_l = F.smooth_l1_loss(loc_p, loc_t, reduction='sum') # size_average=False等价于reduction='sum'
 
-        # Compute conf loss across batch
-        pos_idx = pos.unsqueeze(pos.dim()).expand_as(conf_data)
-        conf_p = conf_data[pos_idx].view(-1,self.num_classes)
-        conf_t = (conf_t[pos] - 1).view(-1)
-        loss_c = F.cross_entropy(conf_p, conf_t, reduction='elementwise_mean') # loss求和之后取平均
-        # loss_c = log_sum_exp(batch_conf) - batch_conf.gather(1, (conf_t[pos]-1).view(-1,1)) # shape [batch*num_priors,num_classes]
-        #                                     # predict               priors
+        # Compute max conf across batch for hard negative mining (logit-combined)
+        batch_conf = conf_data.view(-1, self.num_classes)
+        batch_obj = obj_data.view(-1, 2)
+        logit_0 = batch_obj[:, 0].unsqueeze(1) + torch.log(
+            torch.exp(batch_conf).sum(dim=1, keepdim=True))  # [num*num_priors, 1]
+        logit_k = batch_obj[:, 1].unsqueeze(1).expand_as(batch_conf) + batch_conf
+        logit = torch.cat((logit_0, logit_k), 1)
+        loss_c = F.cross_entropy(logit, conf_t.view(-1), reduction='none') # [num*num_priors]
 
-        # # Compute max conf across batch for hard negative mining
-        # batch_conf = conf_data.view(-1, self.num_classes)
-        # a = log_sum_exp(batch_conf)
-        # loss_c = log_sum_exp(batch_conf) - batch_conf.gather(1,
-        #                                                      conf_t.view(-1, 1))  # shape [batch*num_priors,num_classes]
+        # Hard Negative Mining
+        loss_c[pos.view(-1)] = 0  # filter out pos boxes for now
+        loss_c = loss_c.view(num, -1)
+        _, loss_idx = loss_c.sort(1, descending=True)
+        _, idx_rank = loss_idx.sort(1)
+        num_pos = pos.long().sum(1, keepdim=True)
+        num_neg = torch.clamp(self.negpos_ratio * num_pos, max=num_priors - 1)
+        neg = idx_rank < num_neg.expand_as(idx_rank)
+
+        # Confidence Loss Including Positive and Negative Examples
+        logit = logit.view(num, -1, self.num_classes+1)
+        pos_idx = pos.unsqueeze(2).expand_as(logit)
+        neg_idx = neg.unsqueeze(2).expand_as(logit)
+        conf_p = logit[(pos_idx + neg_idx).gt(0)].view(-1, self.num_classes+1)
+        conf_t = conf_t[(pos + neg).gt(0)]
+        loss_c = F.cross_entropy(conf_p, conf_t, reduction='sum')
 
         # Compute object loss across batch for hard negative mining
         obj_p = obj_data.view(-1,2)
@@ -125,13 +137,14 @@ class MultiBoxLoss(nn.Module):
         pos_idx = pos.unsqueeze(2).expand_as(obj_data)
         neg_idx = neg.unsqueeze(2).expand_as(obj_data)
         obj_p = obj_data[(pos_idx+neg_idx).gt(0)].view(-1, 2)
-        # obj_t = torch.stack([obj_t, (obj_t == 0).long()], 2) # 形成object or not的两个label
         obj_t = obj_t[(pos+neg).gt(0)]
-        loss_obj = F.cross_entropy(obj_p, obj_t, reduction='elementwise_mean')
+        loss_obj = F.cross_entropy(obj_p, obj_t, reduction='sum')
 
-        # 上面已经取平均了,故此处注释
         # Sum of losses: L(x,c,l,g) = (Lconf(x, c) + αLloc(x,l,g)) / N
-        # N = max(num_pos.data.sum().float(), 1)
-        # loss_l /= N
-        # loss_c /= N
+        N = num_pos.data.sum().float()
+        loss_l /= N
+        loss_c /= N
+        loss_obj /= N
+
         return loss_l, loss_c, loss_obj
+        # return loss_l, loss_c

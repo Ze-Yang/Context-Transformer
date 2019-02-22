@@ -12,10 +12,10 @@ import numpy as np
 from torch.autograd import Variable
 import torch.utils.data as data
 from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, AnnotationTransform, COCODetection, VOCDetection, detection_collate, BaseTransform, preproc
-from layers.modules import MultiBoxLoss
+from layers.modules import MultiBoxLoss, MultiBoxLoss_combined
 from layers.functions import PriorBox
 import time
-
+from data.voc0712 import VOC_CLASSES
 
 parser = argparse.ArgumentParser(
     description='Receptive Field Block Net Training')
@@ -68,24 +68,25 @@ else:
 
 if args.version == 'RFB_vgg':
     from models.RFB_Net_vgg import build_net
+    # from models.RFB_Net_vgg_add_feature_layer import build_net
 elif args.version == 'RFB_E_vgg':
     from models.RFB_Net_E_vgg import build_net
 elif args.version == 'RFB_mobile':
     from models.RFB_Net_mobile import build_net
     cfg = COCO_mobile_300
 else:
-    print('Unkown version!')
+    print('Unknown version!')
 
 img_dim = (300,512)[args.size=='512']
 rgb_means = ((104, 117, 123),(103.94,116.78,123.68))[args.version == 'RFB_mobile']
 p = (0.6,0.2)[args.version == 'RFB_mobile']
 num_classes = (21, 81)[args.dataset == 'COCO']
 batch_size = args.batch_size
-weight_decay = 0.0005
-gamma = 0.1
-momentum = 0.9
+# weight_decay = 0.0005
+# gamma = 0.1
+# momentum = 0.9
 
-net = build_net('train', img_dim, num_classes)
+net = build_net('train', img_dim, num_classes-1)
 print(net)
 if args.resume_net == None:
     base_weights = torch.load(args.basenet)
@@ -143,8 +144,11 @@ optimizer = optim.SGD(net.parameters(), lr=args.lr,
                       momentum=args.momentum, weight_decay=args.weight_decay)
 #optimizer = optim.RMSprop(net.parameters(), lr=args.lr,alpha = 0.9, eps=1e-08,
 #                      momentum=args.momentum, weight_decay=args.weight_decay)
+for group in optimizer.param_groups:
+    group.setdefault('initial_lr', group['lr'])
 
-criterion = MultiBoxLoss(num_classes, 0.5, True, 0, True, 3, 0.5, False)
+# criterion = MultiBoxLoss(num_classes-1, 0.5, True, 0, True, 3, 0.5, False)
+criterion = MultiBoxLoss_combined(num_classes-1, 0.5, True, 0, True, 3, 0.5, False)
 priorbox = PriorBox(cfg)
 with torch.no_grad():
     priors = priorbox.forward()
@@ -155,10 +159,8 @@ with torch.no_grad():
 
 def train():
     net.train()
-    # loss counters
-    loc_loss = 0  # epoch
-    conf_loss = 0
     epoch = 0 + args.resume_epoch
+
     print('Loading Dataset...')
 
     if args.dataset == 'VOC':
@@ -174,34 +176,82 @@ def train():
     epoch_size = len(dataset) // args.batch_size
     max_iter = args.max_epoch * epoch_size
 
-    stepvalues_VOC = (150 * epoch_size, 200 * epoch_size, 250 * epoch_size)
-    stepvalues_COCO = (90 * epoch_size, 120 * epoch_size, 140 * epoch_size)
-    stepvalues = (stepvalues_VOC,stepvalues_COCO)[args.dataset=='COCO']
+    # stepvalues_VOC = (150 * epoch_size, 200 * epoch_size, 250 * epoch_size)
+    # stepvalues_COCO = (90 * epoch_size, 120 * epoch_size, 140 * epoch_size)
+    # stepvalues = (stepvalues_VOC,stepvalues_COCO)[args.dataset=='COCO']
+    milestones_VOC = [150, 200, 250]
+    milestones_COCO = [90, 120, 140]
+    milestones = (milestones_VOC, milestones_COCO)[args.dataset == 'COCO']
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=False,
+    #                                            threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0,
+    #                                            eps=1e-08)
+
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones, gamma=args.gamma, last_epoch=epoch-1)
+
     print('Training',args.version, 'on', dataset.name)
     step_index = 0
 
     if args.resume_epoch > 0:
         start_iter = args.resume_epoch * epoch_size
+        t0 = time.time()
     else:
         start_iter = 0
 
-    lr = args.lr
+    first_or_not = 1
+
+    '''
+    split the dataset according to classes
+    # id_to_namedict = VOC_CLASSES
+    # num = len(dataset)
+    # cls_list_2007 = [[] for _ in range(21)]
+    # cls_list_2012 = [[] for _ in range(21)]
+    # 
+    # for index in range(len(dataset)):
+    #     id, targets = dataset.pull_anno(index)
+    #     nms = [] # 去除重复的标签
+    #     for _, gt in enumerate(targets):
+    #         if gt[-1] not in nms:
+    #             nms.append(gt[-1])
+    #             if len(id) == 6:
+    #                 cls_list_2007[int(gt[-1])].append(id)
+    #             else:
+    #                 cls_list_2012[int(gt[-1])].append(id)
+    # 
+    # for i in range(1, 21):
+    #     with open('/home/zeyang/data/VOCdevkit/VOC2007/ImageSets/Main/%s_trainval_det.txt' % id_to_namedict[i], mode='w') as f:
+    #         f.write('\n'.join(cls_list_2007[i]))
+    #         f.write('\n')
+    #     with open('/home/zeyang/data/VOCdevkit/VOC2012/ImageSets/Main/%s_trainval_det.txt' % id_to_namedict[i], mode='w') as f:
+    #         f.write('\n'.join(cls_list_2012[i]))
+    #         f.write('\n')
+    '''
+
     for iteration in range(start_iter, max_iter):
         if iteration % epoch_size == 0:
             # create batch iterator
             batch_iterator = iter(data.DataLoader(dataset, batch_size,
                                                   shuffle=True, num_workers=args.num_workers, collate_fn=detection_collate))
+
+            if not first_or_not:
+                print('Epoch' + repr(epoch) + ' Finished! || L: %.4f C: %.4f O: %.4f' % (
+                          loc_loss/epoch_size, conf_loss/epoch_size, obj_loss/epoch_size)
+                          )
+                if (epoch % 5 == 0 and epoch > 0) or (epoch % 5 == 0 and epoch > 200):
+                    torch.save(net.state_dict(), args.save_folder + args.version + '_' + args.dataset + '_epoches_' +
+                               repr(epoch) + '.pth')
             loc_loss = 0
             conf_loss = 0
-            if (epoch % 10 == 0 and epoch > 0) or (epoch % 5 ==0 and epoch > 200):
-                torch.save(net.state_dict(), args.save_folder+args.version+'_'+args.dataset + '_epoches_'+
-                           repr(epoch) + '.pth')
-            epoch += 1
+            obj_loss = 0
 
-        load_t0 = time.time()
-        if iteration in stepvalues:
-            step_index += 1
-        lr = adjust_learning_rate(optimizer, args.gamma, epoch, step_index, iteration, epoch_size)
+            epoch += 1
+            scheduler.step()  # 等价于lr = args.lr * (gamma ** (step_index))
+            lr = scheduler.get_lr()[0]
+
+        # if iteration in stepvalues:
+        #     step_index += 1   # 在resume模式下有bug
+        # lr = adjust_learning_rate(optimizer, args.gamma, epoch, step_index, iteration, epoch_size) # gamma = 0.1
+        if epoch < 6: # warmup
+            lr = adjust_learning_rate(optimizer, iteration, epoch_size)  # gamma = 0.1
 
 
         # load train data
@@ -216,38 +266,45 @@ def train():
             images = Variable(images)
             targets = [Variable(anno) for anno in targets]
         # forward
-        t0 = time.time()
         out = net(images)
         # backprop
         optimizer.zero_grad()
-        loss_l, loss_c = criterion(out, priors, targets)
-        loss = loss_l + loss_c
+        loss_l, loss_c, loss_obj = criterion(out, priors, targets)
+        loss = loss_l + loss_c + loss_obj
+        # loss_l, loss_c = criterion(out, priors, targets)
+        # loss = loss_l + loss_c
         loss.backward()
         optimizer.step()
-        t1 = time.time()
         loc_loss += loss_l.item()
         conf_loss += loss_c.item()
-        load_t1 = time.time()
-        if iteration % 10 == 0:
-            print('Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
-                  + '|| Totel iter ' +
-                  repr(iteration) + ' || L: %.4f C: %.4f||' % (
-                loss_l.item(),loss_c.item()) + 
-                'Batch time: %.4f sec. ||' % (load_t1 - load_t0) + 'LR: %.8f' % (lr))
+        obj_loss += loss_obj.item()
 
+        if iteration % 10 == 0:
+            if not first_or_not:
+                t1 = time.time()
+                print('Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
+                        + ' || Totel iter ' +
+                        repr(iteration) + ' || L: %.4f C: %.4f O: %.4f ||' % (
+                        loss_l.item(), loss_c.item(), loss_obj.item()) +
+                        ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f' % (lr))
+                # print('Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
+                #       + ' || Totel iter ' +
+                #       repr(iteration) + ' || L: %.4f C: %.4f ||' % (
+                #           loss_l.item(), loss_c.item()) +
+                #       ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f' % (lr))
+            t0 = time.time()
+
+        first_or_not = 0
     torch.save(net.state_dict(), args.save_folder +
                'Final_' + args.version +'_' + args.dataset+ '.pth')
 
 
-def adjust_learning_rate(optimizer, gamma, epoch, step_index, iteration, epoch_size):
+def adjust_learning_rate(optimizer, iteration, epoch_size):
     """Sets the learning rate 
     # Adapted from PyTorch Imagenet example:
     # https://github.com/pytorch/examples/blob/master/imagenet/main.py
     """
-    if epoch < 6:
-        lr = 1e-6 + (args.lr-1e-6) * iteration / (epoch_size * 5) 
-    else:
-        lr = args.lr * (gamma ** (step_index))
+    lr = 1e-6 + (args.lr-1e-6) * iteration / (epoch_size * 5) # 前5个epoch有warm up的过程
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr

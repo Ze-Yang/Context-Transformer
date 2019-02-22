@@ -83,8 +83,7 @@ def matrix_iou(a,b):
     area_b = np.prod(b[:, 2:] - b[:, :2], axis=1)
     return area_i / (area_a[:, np.newaxis] + area_b - area_i)
 
-
-def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
+def match(threshold, truths, priors, variances, labels, loc_t, conf_t, obj_t, idx):
     """Match each prior box with the ground truth box of the highest jaccard
     overlap, encode the bounding boxes, then return the matched indices
     corresponding to both confidence and location preds.
@@ -101,13 +100,16 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     Return:
         The matched indices corresponding to 1)location and 2)confidence preds.
     """
+    # # ensure that groundtruth boxes with pos labels get priority during match
+    # labels, indeces = torch.sort(labels)
+    # truths = truths[indeces]
     # jaccard index
     overlaps = jaccard(
-        truths,
+        truths,              # point_form
         point_form(priors)
     )
     # (Bipartite Matching)
-    # [1,num_objects] best prior for each ground truth
+    # [num_objects,1] best prior for each ground truth
     best_prior_overlap, best_prior_idx = overlaps.max(1, keepdim=True)
     # [1,num_priors] best ground truth for each prior
     best_truth_overlap, best_truth_idx = overlaps.max(0, keepdim=True)
@@ -120,12 +122,17 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, idx):
     # ensure every gt matches with its prior of max overlap
     for j in range(best_prior_idx.size(0)):
         best_truth_idx[best_prior_idx[j]] = j
-    matches = truths[best_truth_idx]          # Shape: [num_priors,4]
-    conf = labels[best_truth_idx]          # Shape: [num_priors]
+    matches = truths[best_truth_idx]          # truths[obj_num, 4], matches[num_priors,4]
+    conf = labels[best_truth_idx]             # labels[num_priors]
     conf[best_truth_overlap < threshold] = 0  # label as background
     loc = encode(matches, priors, variances)
+    obj = conf != 0
     loc_t[idx] = loc    # [num_priors,4] encoded offsets to learn
     conf_t[idx] = conf  # [num_priors] top class label for each prior
+    # if (conf <= 0).all():
+    #     b = best_truth_overlap[best_truth_overlap == 2]
+    #     a=0
+    obj_t[idx] = obj    # [num_priors] object or not label
 
 def encode(matched, priors, variances):
     """Encode the variances from the priorbox layers into the ground truth boxes
@@ -192,8 +199,8 @@ def decode(loc, priors, variances):
     boxes = torch.cat((
         priors[:, :2] + loc[:, :2] * variances[0] * priors[:, 2:],
         priors[:, 2:] * torch.exp(loc[:, 2:] * variances[1])), 1)
-    boxes[:, :2] -= boxes[:, 2:] / 2
-    boxes[:, 2:] += boxes[:, :2]
+    boxes[:, :2] -= boxes[:, 2:] / 2 # 左上角的坐标,percent形式
+    boxes[:, 2:] += boxes[:, :2]     # 左上角加(w,h),percent形式
     return boxes
 
 def decode_multi(loc, priors, offsets, variances):

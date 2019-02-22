@@ -14,7 +14,7 @@ class BasicConv(nn.Module):
         super(BasicConv, self).__init__()
         self.out_channels = out_planes
         self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, groups=groups, bias=bias)
-        self.bn = nn.BatchNorm2d(out_planes,eps=1e-5, momentum=0.01, affine=True) if bn else None
+        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
         self.relu = nn.ReLU(inplace=True) if relu else None
 
     def forward(self, x):
@@ -179,9 +179,8 @@ class RFBNet(nn.Module):
         conf = list()
 
         # apply vgg up to conv4_3 relu
-        for k in range(12):
+        for k in range(12): #???????????????
             x = self.base[k](x)
-
 
         s = self.Norm(x)
         sources.append(s)
@@ -191,7 +190,7 @@ class RFBNet(nn.Module):
         sources.append(x)
 
         # apply extra layers and cache source layer outputs
-        for k, v in enumerate(self.extras):
+        for k, v in enumerate(self.extras): # extras共有7层
             x = v(x)
             if k < self.indicator or k%2 == 0:
                 sources.append(x)
@@ -231,18 +230,18 @@ class RFBNet(nn.Module):
 
 def conv_bn(inp,oup,stride):
     return nn.Sequential(
-            nn.Conv2d(inp, oup, 3, stride, 1, bias=False),
+            nn.Conv2d(inp, oup, kernel_size=3, stride=stride, padding=1, bias=False),
             nn.BatchNorm2d(oup),
             nn.ReLU(inplace=True)
     )
 
 def conv_dw(inp, oup, stride):
     return nn.Sequential(
-            nn.Conv2d(inp,inp, kernel_size=3, stride=stride, padding=1,groups = inp, bias=False),
+            nn.Conv2d(inp, inp, kernel_size=3, stride=stride, padding=1, groups = inp, bias=False),
             nn.BatchNorm2d(inp),
             nn.ReLU(inplace=True),
 
-            nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
+            nn.Conv2d(inp, oup, kernel_size=1, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(oup),
             nn.ReLU(inplace=True),
     )
@@ -268,19 +267,19 @@ def MobileNet():
 
 
 
-def add_extras(size, cfg, i, batch_norm=False):
+def add_extras(size, cfg, in_channels, batch_norm=False): # size=300, cfg=['S', 512 ], in_channels=1024
     layers = []
-    in_channels = i
     flag = False
     for k, v in enumerate(cfg):
         if in_channels != 'S':
             if v == 'S':
-                layers += [BasicRFB(in_channels, cfg[k+1], stride=2, scale = 1.0)]
+                layers += [BasicRFB(in_channels, cfg[k+1], stride=2, scale = 1.0)] # 执行一次
             else:
                 layers += [BasicRFB(in_channels, v, scale = 1.0)]
         in_channels = v
+    # in_channels = 512
     if size ==300:
-        layers += [BasicConv(512,128,kernel_size=1,stride=1)]
+        layers += [BasicConv(512,128,kernel_size=1,stride=1)] # conv, bn, ReLu
         layers += [BasicConv(128,256,kernel_size=3,stride=2, padding=1)]
         layers += [BasicConv(256,128,kernel_size=1,stride=1)]
         layers += [BasicConv(128,256,kernel_size=3,stride=2, padding=1)]
@@ -299,7 +298,7 @@ extras = {
 def multibox(size, base, extra_layers, cfg, num_classes):
     loc_layers = []
     conf_layers = []
-    base_net= [-2,-1]
+    base_net = [-2,-1]
     for k, v in enumerate(base_net):
         if k == 0:
             loc_layers += [nn.Conv2d(512,
