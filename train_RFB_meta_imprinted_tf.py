@@ -61,7 +61,7 @@ parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
 parser.add_argument('--gamma', default=0.1,
                     type=float, help='Gamma update for SGD')
-parser.add_argument('--log_iters', default=True,
+parser.add_argument('--log', default=False,
                     type=bool, help='Print the loss at each iteration')
 parser.add_argument('--save_folder', default='./weights/',
                     help='Location to save checkpoint models')
@@ -155,8 +155,8 @@ else:
         param.requires_grad = False
     for param in net.extras.parameters():
         param.requires_grad = False
-    for param in net.loc.parameters():
-        param.requires_grad = False
+    # for param in net.loc.parameters():
+    #     param.requires_grad = False
     for param in net.conf.parameters():
         param.requires_grad = False
     # for param in net.obj.parameters():
@@ -181,7 +181,7 @@ optimizer = optim.SGD([
                             # {'params': net.base.parameters(), 'lr': args.lr*0.1},
                             # {'params': net.Norm.parameters(), 'lr': args.lr*0.5},
                             # {'params': net.extras.parameters(), 'lr': args.lr*0.5},
-                            # {'params': net.loc.parameters(), 'lr': args.lr*0.1},
+                            {'params': net.loc.parameters(), 'lr': args.lr*0.1},
                             {'params': net.obj.parameters(), 'lr': args.lr*0.1},
                             {'params': net.nonlinear.parameters()},
                             {'params': net.scale, 'lr': args.lr*0.1},
@@ -196,7 +196,8 @@ for group in optimizer.param_groups:
 # criterion = MultiBoxLoss(num_classes-1, 0.5, True, 0, True, 3, 0.5, False)
 criterion = MultiBoxLoss_combined(num_classes - 1, overlap_threshold, True, 0, True, 3, 0.5, False, net)
 
-logger = Logger(args.save_folder + 'logs')
+if args.log:
+    logger = Logger(args.save_folder + 'logs')
 
 if args.ngpu > 1:
     net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)), output_device=0)
@@ -407,10 +408,11 @@ def train():
                       repr(iteration) + ' || L: %.4f C: %.4f O: %.4f ||' % (
                           loss_l.item(), loss_c.item(), loss_obj.item()) +
                       ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f, %.8f' % (lr[0], lr[1]))
-                logger.scalar_summary('loc_loss', loss_l.item(), iteration)
-                logger.scalar_summary('conf_loss', loss_c.item(), iteration)
-                logger.scalar_summary('obj_loss', loss_obj.item(), iteration)
-                logger.scalar_summary('lr', max(lr), iteration)
+                if args.log:
+                    logger.scalar_summary('loc_loss', loss_l.item(), iteration)
+                    logger.scalar_summary('conf_loss', loss_c.item(), iteration)
+                    logger.scalar_summary('obj_loss', loss_obj.item(), iteration)
+                    logger.scalar_summary('lr', max(lr), iteration)
             t0 = time.time()
 
         first_or_not = 0
