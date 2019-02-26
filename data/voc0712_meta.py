@@ -172,7 +172,7 @@ class VOCDetection(data.Dataset):
         self.n_support = n_support
         self.n_query = n_query
         self.phase = phase
-        if n_shot_task not in (1, 2, 3, 5, 10, 30):
+        if n_shot_task not in (0, 1, 2, 3, 5, 10, 30):
             print('The input n_shot_task is not applicable!')
             exit(0)
         ''' # generate .txt document for transfer and meta learning

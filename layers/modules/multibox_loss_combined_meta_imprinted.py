@@ -43,7 +43,7 @@ class MultiBoxLoss_combined(nn.Module):
         self.negpos_ratio = neg_pos
         self.neg_overlap = neg_overlap
         self.variance = [0.1, 0.2]
-        # self.nonlinear = net.nonlinear
+        self.nonlinear = net.nonlinear
         self.scale = net.scale
 
     def forward(self, predictions, priors, targets):
@@ -141,13 +141,12 @@ class MultiBoxLoss_combined(nn.Module):
         # s_conf_cls_mean1 = torch.stack(way_list, 0) # [n_way, num_classes]
 
         # method 2 (faster than method 1)
-        # tmp_list = [torch.stack([self.nonlinear(item[j]) for j in range(item.size(0))], 0) for item in s_conf_data_list]
-        # tmp_list = [(item/torch.norm(item, dim=1, keepdim=True)).mean(0) for item in tmp_list]
-        tmp_list = [(item/torch.norm(item, dim=1, keepdim=True)).mean(0) for item in s_conf_data_list]
-        s_conf_cls_mean = torch.stack([item/torch.norm(item) for item in tmp_list], 0) # [n_way, num_classes]
+        tmp_list = [torch.stack([self.nonlinear(item[j]) for j in range(item.size(0))], 0) for item in s_conf_data_list]
+        tmp_list = [(item/torch.norm(item, dim=1, keepdim=True)).mean(0) for item in tmp_list]
+        s_conf_cls_mean = torch.stack([item/torch.norm(item) for item in tmp_list], 0)
 
         q_conf_data = q_conf_data/torch.norm(q_conf_data, dim=3, keepdim=True) # [n_way, n_query, num_priors, num_classes]
-        batch_conf = q_conf_data.view(-1, self.num_classes).mm(s_conf_cls_mean.t()) * self.scale
+        batch_conf = q_conf_data.view(-1, self.num_classes).mm(s_conf_cls_mean.t()) * self.scale # [n_way, num_classes]
 
         # Compute max conf across batch for hard negative mining (logit-combined)
         batch_obj = q_obj_data.view(-1, 2)  # [n_way*n_query*num_priors, 2]

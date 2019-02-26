@@ -41,7 +41,7 @@ parser.add_argument('--n_shot', type=int, default=1,
                     help="number of support examples per class during training (default: 1)")
 parser.add_argument('--n_query', type=int, default=0,
                     help="number of query examples per class during training(default: 5)")
-parser.add_argument('--train_episodes', type=int, default=100, # 500 for 3 shot, # 2521 for n_way = 12, 3782 for n_way = 8
+parser.add_argument('--train_episodes', type=int, default=70, # 500 for 3 shot, # 2521 for n_way = 12, 3782 for n_way = 8
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
@@ -49,7 +49,7 @@ parser.add_argument('--cuda', default=True,
                     type=bool, help='Use cuda to train model')
 parser.add_argument('--ngpu', default=1, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate',
-                    default=4e-3, type=float, help='initial learning rate')
+                    default=2e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument(
     '--resume_net', default=None, help='resume net for retraining')
@@ -149,14 +149,20 @@ else:
         new_state_dict[name] = v
     net.load_state_dict(new_state_dict, strict=False)
 
-    # for param in net.base.parameters():
-    #     param.requires_grad = False
-    # for param in net.Norm.parameters():
-    #     param.requires_grad = False
-    # for param in net.extras.parameters():
-    #     param.requires_grad = False
-    for param in net.nonlinear.parameters():
+    for param in net.base.parameters():
         param.requires_grad = False
+    for param in net.Norm.parameters():
+        param.requires_grad = False
+    for param in net.extras.parameters():
+        param.requires_grad = False
+    for param in net.loc.parameters():
+        param.requires_grad = False
+    for param in net.conf.parameters():
+        param.requires_grad = False
+    # for param in net.obj.parameters():
+    #     param.requires_grad = False
+    # for param in net.nonlinear.parameters():
+    #     param.requires_grad = False
 
     # def weights_init(m):
     #     for key in m.state_dict():
@@ -172,14 +178,13 @@ else:
     # net.nonlinear.apply(weights_init)
 
 optimizer = optim.SGD([
-                            {'params': net.base.parameters(), 'lr': args.lr*0.1},
-                            {'params': net.Norm.parameters(), 'lr': args.lr*0.5},
-                            {'params': net.extras.parameters(), 'lr': args.lr*0.5},
-                            {'params': net.loc.parameters()},
-                            {'params': net.conf.parameters()},
-                            {'params': net.obj.parameters()},
-                            # {'params': net.nonlinear.parameters()},
-                            {'params': net.scale},
+                            # {'params': net.base.parameters(), 'lr': args.lr*0.1},
+                            # {'params': net.Norm.parameters(), 'lr': args.lr*0.5},
+                            # {'params': net.extras.parameters(), 'lr': args.lr*0.5},
+                            # {'params': net.loc.parameters(), 'lr': args.lr*0.1},
+                            {'params': net.obj.parameters(), 'lr': args.lr*0.1},
+                            {'params': net.nonlinear.parameters()},
+                            {'params': net.scale, 'lr': args.lr*0.1},
                         ], lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 # optimizer = optim.SGD(net.parameters(), lr=args.lr,
 #                       momentum=args.momentum, weight_decay=args.weight_decay)
@@ -401,7 +406,7 @@ def train():
                       + ' || Totel iter ' +
                       repr(iteration) + ' || L: %.4f C: %.4f O: %.4f ||' % (
                           loss_l.item(), loss_c.item(), loss_obj.item()) +
-                      ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f, %.8f' % (lr[0], lr[3]))
+                      ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f, %.8f' % (lr[0], lr[1]))
                 logger.scalar_summary('loc_loss', loss_l.item(), iteration)
                 logger.scalar_summary('conf_loss', loss_c.item(), iteration)
                 logger.scalar_summary('obj_loss', loss_obj.item(), iteration)
