@@ -18,6 +18,7 @@ from layers.functions import PriorBox
 import time
 from data.voc0712 import VOC_CLASSES
 from data.coco_voc_form import COCO_CLASSES
+from logger import Logger
 # torch.cuda.set_device(7)
 
 parser = argparse.ArgumentParser(
@@ -40,7 +41,7 @@ parser.add_argument('--n_shot', type=int, default=1,
                     help="number of support examples per class during training (default: 1)")
 parser.add_argument('--n_query', type=int, default=0,
                     help="number of query examples per class during training(default: 5)")
-parser.add_argument('--train_episodes', type=int, default=70, # 500 for 3 shot, # 2521 for n_way = 12, 3782 for n_way = 8
+parser.add_argument('--train_episodes', type=int, default=100, # 500 for 3 shot, # 2521 for n_way = 12, 3782 for n_way = 8
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
@@ -146,23 +147,38 @@ else:
         else:
             name = k
         new_state_dict[name] = v
-    net.load_state_dict(new_state_dict)
+    net.load_state_dict(new_state_dict, strict=False)
 
-    for param in net.base.parameters():
+    # for param in net.base.parameters():
+    #     param.requires_grad = False
+    # for param in net.Norm.parameters():
+    #     param.requires_grad = False
+    # for param in net.extras.parameters():
+    #     param.requires_grad = False
+    for param in net.nonlinear.parameters():
         param.requires_grad = False
-    for param in net.Norm.parameters():
-        param.requires_grad = False
-    for param in net.extras.parameters():
-        param.requires_grad = False
+
+    # def weights_init(m):
+    #     for key in m.state_dict():
+    #         if key.split('.')[-1] == 'weight':
+    #             if 'conv' in key:
+    #                 init.kaiming_normal_(m.state_dict()[key], mode='fan_out')
+    #             if 'bn' in key:
+    #                 m.state_dict()[key][...] = 1
+    #         elif key.split('.')[-1] == 'bias':
+    #             m.state_dict()[key][...] = 0
+    #
+    # print('Initializing weights for nonlinear mapping layers...')
+    # net.nonlinear.apply(weights_init)
 
 optimizer = optim.SGD([
-                            # {'params': net.base.parameters(), 'lr': args.lr*0.1},
-                            # {'params': net.Norm.parameters(), 'lr': args.lr*0.5},
-                            # {'params': net.extras.parameters(), 'lr': args.lr*0.5},
+                            {'params': net.base.parameters(), 'lr': args.lr*0.1},
+                            {'params': net.Norm.parameters(), 'lr': args.lr*0.5},
+                            {'params': net.extras.parameters(), 'lr': args.lr*0.5},
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
-                            {'params': net.nonlinear.parameters()},
+                            # {'params': net.nonlinear.parameters()},
                             {'params': net.scale},
                         ], lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 # optimizer = optim.SGD(net.parameters(), lr=args.lr,
@@ -174,6 +190,8 @@ for group in optimizer.param_groups:
 
 # criterion = MultiBoxLoss(num_classes-1, 0.5, True, 0, True, 3, 0.5, False)
 criterion = MultiBoxLoss_combined(num_classes - 1, overlap_threshold, True, 0, True, 3, 0.5, False, net)
+
+logger = Logger(args.save_folder + 'logs')
 
 if args.ngpu > 1:
     net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)), output_device=0)
@@ -238,7 +256,7 @@ def train():
     #                                n_episodes=args.train_episodes, phase='train')
     if args.n_shot_task == 1:
         sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.n_way,
-                                       n_episodes=6*args.train_episodes, phase='test')
+                                       n_episodes=2*args.train_episodes, phase='test')
     else:
         sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.n_way,
                                        n_episodes=args.train_episodes, phase='train')
@@ -326,15 +344,15 @@ def train():
 
         # if epoch < 6:  # warmup
         #     lr = adjust_learning_rate(optimizer, iteration, epoch_size)  # gamma = 0.1
-        # for _ in range(10):
+        # for _ in range(4):
         # load train data
         if args.n_shot_task == 1:
             s_img, s_t = next(batch_iterator)
             q_img, q_t = next(batch_iterator)
-            for _ in range(4):
-                tmp_img, tmp_t = next(batch_iterator)
-                q_img = torch.cat((q_img, tmp_img), 1)
-                q_t = [q_t[i]+tmp_t[i] for i in range(len(q_t))]
+            # for _ in range(4):
+            #     tmp_img, tmp_t = next(batch_iterator)
+            #     q_img = torch.cat((q_img, tmp_img), 1)
+            #     q_t = [q_t[i]+tmp_t[i] for i in range(len(q_t))]
         else:
             s_img, s_t, q_img, q_t = next(batch_iterator)
 
@@ -344,9 +362,9 @@ def train():
         # q_img = torch.index_select(q_img, 0, index)
         # q_t = [q_t[id] for id in index]
 
-        img = torch.cat((s_img, q_img), 1)
-        tar = [s_t[i]+q_t[i] for i in range(len(s_t))]
-        vis_picture(img, tar)
+        # img = torch.cat((s_img, q_img), 1)
+        # tar = [s_t[i]+q_t[i] for i in range(len(s_t))]
+        # vis_picture(img, tar)
         # vis_picture(s_img, s_t)
         # vis_picture(q_img, q_t)
 
@@ -384,6 +402,10 @@ def train():
                       repr(iteration) + ' || L: %.4f C: %.4f O: %.4f ||' % (
                           loss_l.item(), loss_c.item(), loss_obj.item()) +
                       ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f, %.8f' % (lr[0], lr[3]))
+                logger.scalar_summary('loc_loss', loss_l.item(), iteration)
+                logger.scalar_summary('conf_loss', loss_c.item(), iteration)
+                logger.scalar_summary('obj_loss', loss_obj.item(), iteration)
+                logger.scalar_summary('lr', max(lr), iteration)
             t0 = time.time()
 
         first_or_not = 0
