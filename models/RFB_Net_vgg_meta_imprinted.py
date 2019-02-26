@@ -156,11 +156,11 @@ class RFBNet(nn.Module):
         self.conf = nn.ModuleList(head[1])
         self.obj = nn.ModuleList(head[2])
 
-        self.nonlinear = nn.Sequential(
-                nn.Linear(60, 128),
-                nn.ReLU(inplace=True),
-                nn.Linear(128, 60)
-                )
+        # self.nonlinear = nn.Sequential(
+        #         nn.Linear(60, 128),
+        #         nn.ReLU(inplace=True),
+        #         nn.Linear(128, 60)
+        #         )
         self.scale = nn.Parameter(torch.FloatTensor([10]))
 
         if self.phase == 'test':
