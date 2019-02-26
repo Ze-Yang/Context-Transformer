@@ -164,18 +164,18 @@ else:
     # for param in net.nonlinear.parameters():
     #     param.requires_grad = False
 
-    # def weights_init(m):
-    #     for key in m.state_dict():
-    #         if key.split('.')[-1] == 'weight':
-    #             if 'conv' in key:
-    #                 init.kaiming_normal_(m.state_dict()[key], mode='fan_out')
-    #             if 'bn' in key:
-    #                 m.state_dict()[key][...] = 1
-    #         elif key.split('.')[-1] == 'bias':
-    #             m.state_dict()[key][...] = 0
-    #
-    # print('Initializing weights for nonlinear mapping layers...')
-    # net.nonlinear.apply(weights_init)
+    def weights_init(m):
+        for key in m.state_dict():
+            if key.split('.')[-1] == 'weight':
+                if 'conv' in key:
+                    init.kaiming_normal_(m.state_dict()[key], mode='fan_out')
+                if 'bn' in key:
+                    m.state_dict()[key][...] = 1
+            elif key.split('.')[-1] == 'bias':
+                m.state_dict()[key][...] = 0
+
+    print('Initializing weights for nonlinear mapping layers...')
+    net.nonlinear.apply(weights_init)
 
 optimizer = optim.SGD([
                             # {'params': net.base.parameters(), 'lr': args.lr*0.1},

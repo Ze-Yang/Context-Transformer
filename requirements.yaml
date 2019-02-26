@@ -66,6 +66,22 @@ dependencies:
   - zlib=1.2.11=0
   - pytorch=0.4.1=py36_py35_py27__9.0.176_7.1.2_2
   - pip:
+    - absl-py==0.7.0
+    - astor==0.7.1
+    - gast==0.2.2
+    - grpcio==1.18.0
+    - h5py==2.9.0
+    - keras-applications==1.0.7
+    - keras-preprocessing==1.0.9
+    - markdown==3.0.1
+    - protobuf==3.6.1
+    - scikit-learn==0.20.2
+    - scipy==1.2.1
+    - sklearn==0.0
+    - tensorboard==1.12.2
+    - tensorflow==1.12.0
+    - termcolor==1.1.0
     - torch==0.4.1.post2
+    - werkzeug==0.14.1
 prefix: /home/zeyang/anaconda3/envs/RFB
 
