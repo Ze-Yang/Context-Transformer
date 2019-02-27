@@ -41,7 +41,7 @@ parser.add_argument('--n_shot', type=int, default=1,
                     help="number of support examples per class during training (default: 1)")
 parser.add_argument('--n_query', type=int, default=0,
                     help="number of query examples per class during training(default: 5)")
-parser.add_argument('--train_episodes', type=int, default=70, # 500 for 3 shot, # 2521 for n_way = 12, 3782 for n_way = 8
+parser.add_argument('--train_episodes', type=int, default=100, # 500 for 3 shot, # 2521 for n_way = 12, 3782 for n_way = 8
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
@@ -55,7 +55,7 @@ parser.add_argument(
     '--resume_net', default=None, help='resume net for retraining')
 parser.add_argument('--resume_epoch', default=0,
                     type=int, help='resume iter for retraining')
-parser.add_argument('-max', '--max_epoch', default=40,
+parser.add_argument('-max', '--max_epoch', default=50,
                     type=int, help='max epoch for retraining')
 parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
@@ -149,42 +149,43 @@ else:
         new_state_dict[name] = v
     net.load_state_dict(new_state_dict, strict=False)
 
-    for param in net.base.parameters():
-        param.requires_grad = False
-    for param in net.Norm.parameters():
-        param.requires_grad = False
-    for param in net.extras.parameters():
-        param.requires_grad = False
+    # for param in net.base.parameters():
+    #     param.requires_grad = False
+    # for param in net.Norm.parameters():
+    #     param.requires_grad = False
+    # for param in net.extras.parameters():
+    #     param.requires_grad = False
     # for param in net.loc.parameters():
     #     param.requires_grad = False
-    for param in net.conf.parameters():
-        param.requires_grad = False
+    # for param in net.conf.parameters():
+    #     param.requires_grad = False
     # for param in net.obj.parameters():
     #     param.requires_grad = False
     # for param in net.nonlinear.parameters():
     #     param.requires_grad = False
 
-    def weights_init(m):
-        for key in m.state_dict():
-            if key.split('.')[-1] == 'weight':
-                if 'conv' in key:
-                    init.kaiming_normal_(m.state_dict()[key], mode='fan_out')
-                if 'bn' in key:
-                    m.state_dict()[key][...] = 1
-            elif key.split('.')[-1] == 'bias':
-                m.state_dict()[key][...] = 0
-
-    print('Initializing weights for nonlinear mapping layers...')
-    net.nonlinear.apply(weights_init)
+    # def weights_init(m):
+    #     for key in m.state_dict():
+    #         if key.split('.')[-1] == 'weight':
+    #             if 'conv' in key:
+    #                 init.kaiming_normal_(m.state_dict()[key], mode='fan_out')
+    #             if 'bn' in key:
+    #                 m.state_dict()[key][...] = 1
+    #         elif key.split('.')[-1] == 'bias':
+    #             m.state_dict()[key][...] = 0
+    #
+    # print('Initializing weights for nonlinear mapping layers...')
+    # net.nonlinear.apply(weights_init)
 
 optimizer = optim.SGD([
-                            # {'params': net.base.parameters(), 'lr': args.lr*0.1},
-                            # {'params': net.Norm.parameters(), 'lr': args.lr*0.5},
-                            # {'params': net.extras.parameters(), 'lr': args.lr*0.5},
-                            {'params': net.loc.parameters(), 'lr': args.lr*0.1},
-                            {'params': net.obj.parameters(), 'lr': args.lr*0.1},
-                            {'params': net.nonlinear.parameters()},
-                            {'params': net.scale, 'lr': args.lr*0.1},
+                            {'params': net.base.parameters(), 'lr': args.lr*0.1},
+                            {'params': net.Norm.parameters(), 'lr': args.lr*0.5},
+                            {'params': net.extras.parameters(), 'lr': args.lr*0.5},
+                            {'params': net.loc.parameters(), 'lr': args.lr},
+                            {'params': net.conf.parameters(), 'lr': args.lr},
+                            {'params': net.obj.parameters(), 'lr': args.lr},
+                            {'params': net.nonlinear.parameters(), 'lr': args.lr},
+                            {'params': net.scale, 'lr': args.lr},
                         ], lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 # optimizer = optim.SGD(net.parameters(), lr=args.lr,
 #                       momentum=args.momentum, weight_decay=args.weight_decay)
@@ -239,7 +240,7 @@ def train():
     # stepvalues_VOC = (150 * epoch_size, 200 * epoch_size, 250 * epoch_size)
     # stepvalues_COCO = (90 * epoch_size, 120 * epoch_size, 140 * epoch_size)
     # stepvalues = (stepvalues_VOC,stepvalues_COCO)[args.dataset=='COCO']
-    milestones_VOC = [30, 35]
+    milestones_VOC = [30, 40]
     milestones_COCO = [100, 150, 180]
     milestones = (milestones_VOC, milestones_COCO)[args.dataset == 'COCO']
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, verbose=False,

@@ -373,7 +373,7 @@ if __name__ == '__main__':
         else:
             name = k
         new_state_dict[name] = v
-    net.load_state_dict(new_state_dict)
+    net.load_state_dict(new_state_dict, strict=False)
     for param in net.parameters():
         param.requires_grad = False
     net.eval()
