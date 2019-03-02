@@ -117,6 +117,8 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, obj_t, id
     best_truth_overlap.squeeze_(0)
     best_prior_idx.squeeze_(1)
     best_prior_overlap.squeeze_(1)
+    if overlap is not None:
+        overlap[idx] = best_truth_overlap
     best_truth_overlap.index_fill_(0, best_prior_idx, 2)  # ensure best prior
     # TODO refactor: index  best_prior_idx with long tensor
     # ensure every gt matches with its prior of max overlap
@@ -133,8 +135,7 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, obj_t, id
     #     b = best_truth_overlap[best_truth_overlap == 2]
     #     a=0
     obj_t[idx] = obj    # [num_priors] object or not label
-    if overlap is not None:
-        overlap[idx] = best_truth_overlap
+
 
 def encode(matched, priors, variances):
     """Encode the variances from the priorbox layers into the ground truth boxes

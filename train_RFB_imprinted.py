@@ -41,7 +41,7 @@ parser.add_argument('--n_shot_task', type=int, default=1,
                     help="number of support examples per class on target domain")
 parser.add_argument('--n_shot', type=int, default=1,
                     help="number of support examples per class during training (default: 1)")
-parser.add_argument('--support_episodes', type=int, default=20,
+parser.add_argument('--support_episodes', type=int, default=50,
                     help="number of center calculation per support image (default: 100)")
 parser.add_argument('--train_episodes', type=int, default=50,
                     help="number of train episodes per epoch (default: 100)")
@@ -148,9 +148,9 @@ else:
     net.load_state_dict(new_state_dict, strict=False)
 
 optimizer = optim.SGD([
-                            {'params': net.base.parameters(), 'lr': args.lr*0.1},
-                            {'params': net.Norm.parameters(), 'lr': args.lr*0.5},
-                            {'params': net.extras.parameters(), 'lr': args.lr*0.5},
+                            {'params': net.base.parameters()},
+                            {'params': net.Norm.parameters()},
+                            {'params': net.extras.parameters()},
                             # {'params': net.base.parameters()},
                             # {'params': net.Norm.parameters()},
                             # {'params': net.extras.parameters()},
@@ -208,10 +208,8 @@ def train(net):
 
     if args.cuda:
         way_list = [torch.empty(0, feature_dim).cuda() for _ in range(n_way)]
-        overlap_list = [torch.empty(0).cuda() for _ in range(n_way)]
     else:
         way_list = [torch.empty(0, feature_dim) for _ in range(n_way)]
-        overlap_list = [torch.empty(0) for _ in range(n_way)]
 
     print('Initializing the imprinted matrix...')
     # imprinted matrix initialization
@@ -233,12 +231,10 @@ def train(net):
             s_loc_t = torch.Tensor(n_way * n_shot, num_priors, 4).cuda()
             s_conf_t = torch.CharTensor(n_way * n_shot, num_priors).cuda()
             s_obj_t = torch.ByteTensor(n_way * n_shot, num_priors).cuda()
-            overlap = torch.Tensor(n_way * n_shot, num_priors).cuda()
         else:
             s_loc_t = torch.Tensor(n_way * n_shot, num_priors, 4)
             s_conf_t = torch.CharTensor(n_way * n_shot, num_priors)
             s_obj_t = torch.ByteTensor(n_way * n_shot, num_priors)
-            overlap = torch.Tensor(n_way * n_shot, num_priors)
 
         # match priors with gt
         for idx in range(n_way):
@@ -247,16 +243,14 @@ def train(net):
                 labels = s_t[idx][idy][:, -1].data  # [obj_num]
                 defaults = priors.data  # [num_priors,4]
                 match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, s_loc_t, s_conf_t, s_obj_t,
-                      idx * n_shot + idy, overlap)
+                      idx * n_shot + idy)
 
-        overlap_list = [torch.cat((overlap_list[i-1], overlap[s_conf_t == i]), 0) for i in range(1, num_classes)]
         s_conf_t = s_conf_t.view(n_way, n_shot, num_priors).unsqueeze(3).expand_as(s_conf_data)
         s_conf_data_list = [s_conf_data[s_conf_t == i].view(-1, feature_dim) for i in range(1, num_classes)]
         way_list = [torch.cat((way_list[i], s_conf_data_list[i]), 0) for i in range(n_way)]
-    overlap_list = [(item / torch.sum(item)).unsqueeze(0) for item in overlap_list]
-    way_list = [(item / torch.norm(item, dim=1, keepdim=True)) for item in way_list]
-    way_list = [overlap_list[i].mm(way_list[i]) for i in range(n_way)]
-    net.module.imprinted_matrix.data = torch.cat([item / torch.norm(item) for item in way_list], 0)  # [n_way, num_classes]
+    way_list = [(item / torch.norm(item, dim=1, keepdim=True)).mean(0) for item in way_list]
+    net.module.imprinted_matrix.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [n_way, num_classes]
+
 
 
 
@@ -269,7 +263,7 @@ def train(net):
     epoch_size = args.train_episodes
     max_iter = args.max_epoch * epoch_size
 
-    milestones_VOC = [30, 35]
+    milestones_VOC = [20, 30, 35]
     milestones_COCO = [30, 60, 90]
     milestones = (milestones_VOC, milestones_COCO)[args.dataset == 'COCO']
 
