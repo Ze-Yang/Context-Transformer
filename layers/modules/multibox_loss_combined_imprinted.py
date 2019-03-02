@@ -32,7 +32,7 @@ class MultiBoxLoss_combined(nn.Module):
     """
 
 
-    def __init__(self, num_classes, overlap_thresh, prior_for_matching, bkg_label, neg_mining, neg_pos, neg_overlap, encode_target):
+    def __init__(self, num_classes, overlap_thresh, prior_for_matching, bkg_label, neg_mining, neg_pos, neg_overlap, encode_target, net):
         super(MultiBoxLoss_combined, self).__init__()
         self.num_classes = num_classes
         self.threshold = overlap_thresh
@@ -43,6 +43,8 @@ class MultiBoxLoss_combined(nn.Module):
         self.negpos_ratio = neg_pos
         self.neg_overlap = neg_overlap
         self.variance = [0.1, 0.2]
+        self.imprinted_matrix = net.imprinted_matrix
+        self.scale = net.scale
 
     def forward(self, predictions, priors, targets):
         """Multibox Loss
@@ -60,9 +62,14 @@ class MultiBoxLoss_combined(nn.Module):
         loc_data, conf_data, obj_data = predictions # conf_data[batch_size, num_priors, num_classes]
                                                     # loc_data[batch_size, num_priors, 4]
                                                     # obj_data[batch_size, num_priors, 2]
-        priors = priors                             # shape[num_priors, 4]
-        num = loc_data.size(0)                      # batch_size
-        num_priors = (priors.size(0))
+
+        num_priors = priors.size(0)
+        n_way = conf_data.size(0)
+        n_shot = conf_data.size(1)
+        num = n_way * n_shot
+        loc_data = loc_data.view(-1, num_priors, 4)
+        conf_data = conf_data.view(-1, num_priors, self.num_classes)
+        obj_data = obj_data.view(-1, num_priors, 2)
 
         # match priors (default boxes) and ground truth boxes
         if GPU:
@@ -75,11 +82,12 @@ class MultiBoxLoss_combined(nn.Module):
             obj_t = torch.ByteTensor(num, num_priors)
 
         # match priors with gt
-        for idx in range(num): # batch_size
-            truths = targets[idx][:, :-1].data  # [obj_num, 4]
-            labels = targets[idx][:, -1].data   # [obj_num]
-            defaults = priors.data              # [num_priors,4]
-            match(self.threshold, truths, defaults, self.variance, labels, loc_t, conf_t, obj_t, idx)
+        for idx in range(n_way):
+            for idy in range(n_shot):
+                truths = targets[idx][idy][:, :-1].data  # [obj_num, 4]
+                labels = targets[idx][idy][:, -1].data   # [obj_num]
+                defaults = priors.data                   # [num_priors,4]
+                match(self.threshold,truths,defaults,self.variance,labels,loc_t,conf_t,obj_t,idx*n_shot+idy)
 
         pos = obj_t.byte() # [num, num_priors]
 
@@ -90,15 +98,24 @@ class MultiBoxLoss_combined(nn.Module):
         loc_t = loc_t[pos_idx].view(-1, 4)    #对应的target
         loss_l = F.smooth_l1_loss(loc_p, loc_t, reduction='sum') # size_average=False等价于reduction='sum'
 
-        # Compute max conf across batch for hard negative mining (logit-combined)
-        batch_conf = conf_data.view(-1, self.num_classes)
-        batch_obj = obj_data.view(-1, 2)
-        logit_0 = batch_obj[:, 0].unsqueeze(1) + torch.log(
-            torch.exp(batch_conf).sum(dim=1, keepdim=True))  # [num*num_priors, 1]
-        logit_k = batch_obj[:, 1].unsqueeze(1).expand_as(batch_conf) + batch_conf
-        logit = torch.cat((logit_0, logit_k), 1)
-        loss_c = F.cross_entropy(logit, conf_t.long().view(-1), reduction='none') # [num*num_priors]
 
+
+        # Confidence Loss(cosine distance to classes center)
+        # pos [num, num_priors]
+        # conf_data [num, num_priors, feature_dim]
+        conf_data = conf_data / torch.norm(conf_data, dim=2, keepdim=True)  # [num, num_priors, feature_dim]
+        batch_conf = conf_data.view(-1, self.num_classes).mm(self.imprinted_matrix.t()) * self.scale  # [n_way, num_classes]
+
+        # Compute max conf across batch for hard negative mining (logit-combined)
+        batch_obj = obj_data.view(-1, 2)  # [n_way*n_shot*num_priors, 2]
+        logit_0 = batch_obj[:, 0].unsqueeze(1) + torch.log(
+            torch.exp(batch_conf).sum(dim=1, keepdim=True))  # [n_way*n_query*num_priors, 1]
+        logit_k = batch_obj[:, 1].unsqueeze(1).expand_as(batch_conf) + batch_conf  # [n_way*n_query*num_priors, n_way]
+        logit = torch.cat((logit_0, logit_k), 1)  # [n_way*n_query*num_priors, n_way+1]
+        # with torch.no_grad():
+        loss_c = F.cross_entropy(logit, conf_t.long().view(-1), reduction='none')  # [n_way*n_query*num_priors]
+
+        # with torch.no_grad():
         # Hard Negative Mining
         loss_c[pos.view(-1)] = 0  # filter out pos boxes for now
         loss_c = loss_c.view(num, -1)
@@ -109,17 +126,22 @@ class MultiBoxLoss_combined(nn.Module):
         neg = idx_rank < num_neg.expand_as(idx_rank)
 
         # Confidence Loss Including Positive and Negative Examples
-        logit = logit.view(num, -1, self.num_classes+1)
+        logit = logit.view(num, -1, n_way+1)
         pos_idx = pos.unsqueeze(2).expand_as(logit)
         neg_idx = neg.unsqueeze(2).expand_as(logit)
-        conf_p = logit[(pos_idx + neg_idx).gt(0)].view(-1, self.num_classes+1)
+        conf_p = logit[(pos_idx + neg_idx).gt(0)].view(-1, n_way+1)
         conf_t = conf_t[(pos + neg).gt(0)]
         loss_c = F.cross_entropy(conf_p, conf_t.long(), reduction='sum')
 
+
+
+
         # Compute object loss across batch for hard negative mining
         obj_p = obj_data.view(-1, 2)
+        # with torch.no_grad():
         loss_obj = F.cross_entropy(obj_p, obj_t.long().view(-1), reduction='none') # [batch*num_priors]
 
+        # with torch.no_grad():
         # Hard Negative Mining
         loss_obj[pos.view(-1)] = 0 # filter out pos boxes for now
         loss_obj = loss_obj.view(num, -1)
@@ -143,7 +165,6 @@ class MultiBoxLoss_combined(nn.Module):
         loss_obj /= N
 
         return loss_l, loss_c, loss_obj
-        # return loss_l, loss_c
 
 def vis_picture(imgs, targets):
     from data.coco_voc_form import COCO_CLASSES

@@ -83,7 +83,7 @@ def matrix_iou(a,b):
     area_b = np.prod(b[:, 2:] - b[:, :2], axis=1)
     return area_i / (area_a[:, np.newaxis] + area_b - area_i)
 
-def match(threshold, truths, priors, variances, labels, loc_t, conf_t, obj_t, idx):
+def match(threshold, truths, priors, variances, labels, loc_t, conf_t, obj_t, idx, overlap=None):
     """Match each prior box with the ground truth box of the highest jaccard
     overlap, encode the bounding boxes, then return the matched indices
     corresponding to both confidence and location preds.
@@ -133,6 +133,8 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, obj_t, id
     #     b = best_truth_overlap[best_truth_overlap == 2]
     #     a=0
     obj_t[idx] = obj    # [num_priors] object or not label
+    if overlap is not None:
+        overlap[idx] = best_truth_overlap
 
 def encode(matched, priors, variances):
     """Encode the variances from the priorbox layers into the ground truth boxes

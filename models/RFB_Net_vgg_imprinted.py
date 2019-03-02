@@ -155,8 +155,8 @@ class RFBNet(nn.Module):
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
         self.obj = nn.ModuleList(head[2])
-        if self.phase == 'test':
-            self.softmax = nn.Softmax(dim=-1)
+        self.imprinted_matrix = nn.Parameter(torch.FloatTensor(20, 60))
+        self.scale = nn.Parameter(torch.FloatTensor([10]))
 
     def forward(self, x):
         """Applies network layers and ops on input image(s) x.
@@ -182,9 +182,25 @@ class RFBNet(nn.Module):
         loc = list()
         conf = list()
         obj = list()
+        if len(x) == 2:
+            meta_learning = True
+            n_way = x[0].size(0)
+            n_support = x[0].size(1)
+            n_query = x[1].size(1)
+            x = torch.cat(x, 1).view(-1, 3, 300, 300)
+        else:
+            meta_learning = False
+            if x.dim()==5:
+                n_way = x.size(0)
+                per_way = x.size(1)
+                x = x.view(-1, 3, 300, 300)
+            else:
+                n_way = None
 
         # apply vgg up to conv4_3 relu
         for k in range(23):
+            # for param in self.base[k].parameters():
+            #     a = param
             x = self.base[k](x)
 
         s = self.Norm(x)
@@ -202,26 +218,39 @@ class RFBNet(nn.Module):
 
         # apply multibox head to source layers
         for (x, l, c, o) in zip(sources, self.loc, self.conf, self.obj):
-            loc.append(l(x).permute(0, 2, 3, 1).contiguous())
-            conf.append(c(x).permute(0, 2, 3, 1).contiguous())
-            obj.append(o(x).permute(0, 2, 3, 1).contiguous())
+            loc.append(l(x).permute(0, 2, 3, 1).contiguous())   # [num, map_size, map_size, 6*4]
+            conf.append(c(x).permute(0, 2, 3, 1).contiguous())  # [num, map_size, map_size, 6*num_classes]
+            obj.append(o(x).permute(0, 2, 3, 1).contiguous())   # [num, map_size, map_size, 6*2]
 
         loc = torch.cat([o.view(o.size(0), -1) for o in loc], 1) # 把所有的feature map的输出拼合起来
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
         obj = torch.cat([o.view(o.size(0), -1) for o in obj], 1)
 
-        if self.phase == "test":
-            output = (
-                loc.view(loc.size(0), -1, 4),                   # loc preds
-                self.softmax(conf.view(-1, self.num_classes)),  # conf preds
-                self.softmax(obj.view(-1, 2))
-            )
+        # 把所有的feature map的输出拼合起来
+        if meta_learning:
+            loc = loc.view(n_way, n_support + n_query, -1, 4)
+            conf = conf.view(n_way, n_support + n_query, -1, self.num_classes)
+            obj = obj.view(n_way, n_support + n_query, -1, 2)
+            s_loc = loc[:, :n_support]   # [n_way, n_support, num_priors, 4]
+            s_conf = conf[:, :n_support] # [n_way, n_support, num_priors, num_classes]
+            s_obj = obj[:, :n_support]   # [n_way, n_support, num_priors, 2]
+            q_loc = loc[:, n_support:]   # [n_way, n_query, num_priors, 4]
+            q_conf = conf[:, n_support:] # [n_way, n_query, num_priors, num_classes]
+            q_obj = obj[:, n_support:]   # [n_way, n_query, num_priors, 2]
+
+            output = (s_loc, s_conf, s_obj, q_loc, q_conf, q_obj)
         else:
-            output = (
-                loc.view(loc.size(0), -1, 4),
-                conf.view(conf.size(0), -1, self.num_classes),
-                obj.view(obj.size(0), -1, 2),
-            )
+            if n_way:
+                loc = loc.view(n_way, per_way, -1, 4)
+                conf = conf.view(n_way, per_way, -1, self.num_classes)
+                obj = obj.view(n_way, per_way, -1, 2)
+            else:
+                loc = loc.view(loc.size(0), -1, 4)
+                conf = conf.view(conf.size(0), -1, self.num_classes)
+                obj = obj.view(obj.size(0), -1, 2)
+
+            output = (loc, conf, obj)
+
         return output
 
     def load_weights(self, base_file):
@@ -232,6 +261,9 @@ class RFBNet(nn.Module):
             print('Finished!')
         else:
             print('Sorry only .pth and .pkl files supported.')
+
+    def normalize(self):
+        self.imprinted_matrix.data = self.imprinted_matrix / torch.norm(self.imprinted_matrix, dim=1, keepdim=True)
 
 
 # This function is derived from torchvision VGG make_layers()
@@ -344,7 +376,7 @@ mbox = {
 }
 
 
-def build_net(phase, size=300, num_classes=21):
+def build_net(phase, size=300, num_classes=21, overlap_threshold=0.5):
     if phase != "test" and phase != "train":
         print("Error: Phase not recognized")
         return
