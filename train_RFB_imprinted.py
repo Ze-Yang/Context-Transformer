@@ -5,14 +5,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
-import torchvision.transforms as transforms
 import torch.nn.init as init
 import argparse
-import numpy as np
-from torch.autograd import Variable
 import torch.utils.data as data
 from data import VOC_AnnotationTransform, COCO_AnnotationTransform, COCODetection, VOCDetection, BaseTransform, VOC_300,VOC_512,COCO_300,COCO_512,\
     COCO_mobile_300, EpisodicBatchSampler, detection_collate, VOCroot, COCOroot, preproc
+from models.RFB_Net_vgg_imprinted import l2_norm
 from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
 from layers.functions import PriorBox
 from utils.box_utils import match
@@ -151,13 +149,12 @@ optimizer = optim.SGD([
                             {'params': net.base.parameters()},
                             {'params': net.Norm.parameters()},
                             {'params': net.extras.parameters()},
-                            # {'params': net.base.parameters()},
-                            # {'params': net.Norm.parameters()},
-                            # {'params': net.extras.parameters()},
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
-                            {'params': net.imprinted_matrix},
+                            {'params': net.denselayer1.parameters()},
+                            {'params': net.denselayer2.parameters()},
+                            {'params': net.denselayer3.parameters()},
                             {'params': net.scale},
                         ], lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 # optimizer = optim.SGD(net.parameters(), lr=args.lr,
@@ -183,14 +180,21 @@ with torch.no_grad():
         priors = priors.cuda()
 num_priors = priors.size(0)
 
+def composite(bn, norm, fc=None):
+    def function(*inputs):
+        concated_features = torch.cat(inputs, 1)
+        if fc is not None:
+            output = fc(norm(bn(concated_features)))
+        else:
+            output = norm(bn(concated_features))
+        return output
+
+    return function
 
 def train(net):
     net.eval()
     for param in net.parameters():
         param.requires_grad = False
-
-    if args.ngpu > 1:
-        net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)), output_device=0)
 
     print('Loading Dataset...')
     if args.dataset == 'VOC':
@@ -201,62 +205,94 @@ def train(net):
         print('Only VOC is supported now!')
         return
 
-    sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=len(dataset),
-                                   n_episodes=args.support_episodes, phase='train')
-    batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
-                                          collate_fn=lambda x: detection_collate(x, 'test')))
+    bn1 = nn.BatchNorm1d(60, affine=False).cuda()
+    bn2 = nn.BatchNorm1d(80, affine=False).cuda()
+    bn3 = nn.BatchNorm1d(100, affine=False).cuda()
+    norm = l2_norm(1).cuda()
+    fc1 = net.denselayer1.fc
+    fc2 = net.denselayer2.fc
 
-    if args.cuda:
-        way_list = [torch.empty(0, feature_dim).cuda() for _ in range(n_way)]
-    else:
-        way_list = [torch.empty(0, feature_dim) for _ in range(n_way)]
-
-    print('Initializing the imprinted matrix...')
-    # imprinted matrix initialization
-    for _ in range(args.support_episodes):
-        # load support data
-        # for i in range(10):
-        s_img, s_t = next(batch_iterator)
-        # vis_picture_1(s_img, s_t)
+    for i in range(3):
+        print('Initializing the ' + ('first', 'second', 'third')[i] + ' layer...')
+        sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=len(dataset),
+                                       n_episodes=args.support_episodes, phase='train')
+        batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
+                                              collate_fn=lambda x: detection_collate(x, 'test')))
 
         if args.cuda:
-            s_img = s_img.cuda()
-            s_t = [[anno.cuda() for anno in cls_list] for cls_list in s_t]
-
-        out = net(s_img)
-
-        _, s_conf_data, _ = out
-
-        if args.cuda:
-            s_loc_t = torch.Tensor(n_way * n_shot, num_priors, 4).cuda()
-            s_conf_t = torch.CharTensor(n_way * n_shot, num_priors).cuda()
-            s_obj_t = torch.ByteTensor(n_way * n_shot, num_priors).cuda()
+            way_list = [torch.empty(0, feature_dim).cuda() for _ in range(n_way)]
         else:
-            s_loc_t = torch.Tensor(n_way * n_shot, num_priors, 4)
-            s_conf_t = torch.CharTensor(n_way * n_shot, num_priors)
-            s_obj_t = torch.ByteTensor(n_way * n_shot, num_priors)
+            way_list = [torch.empty(0, feature_dim) for _ in range(n_way)]
 
-        # match priors with gt
-        for idx in range(n_way):
-            for idy in range(n_shot):
-                truths = s_t[idx][idy][:, :-1].data  # [obj_num, 4]
-                labels = s_t[idx][idy][:, -1].data  # [obj_num]
-                defaults = priors.data  # [num_priors,4]
-                match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, s_loc_t, s_conf_t, s_obj_t,
-                      idx * n_shot + idy)
+        for _ in range(args.support_episodes):
+            # load support data
+            # for i in range(10):
+            s_img, s_t = next(batch_iterator)
+            # vis_picture_1(s_img, s_t)
 
-        s_conf_t = s_conf_t.view(n_way, n_shot, num_priors).unsqueeze(3).expand_as(s_conf_data)
-        s_conf_data_list = [s_conf_data[s_conf_t == i].view(-1, feature_dim) for i in range(1, num_classes)]
-        way_list = [torch.cat((way_list[i], s_conf_data_list[i]), 0) for i in range(n_way)]
-    way_list = [(item / torch.norm(item, dim=1, keepdim=True)).mean(0) for item in way_list]
-    net.module.imprinted_matrix.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [n_way, num_classes]
+            if args.cuda:
+                s_img = s_img.cuda()
+                s_t = [[anno.cuda() for anno in cls_list] for cls_list in s_t]
 
+            out = net(s_img)
 
+            _, s_conf_data, s_conf_obj = out
 
+            if args.cuda:
+                s_loc_t = torch.Tensor(n_way * n_shot, num_priors, 4).cuda()
+                s_conf_t = torch.CharTensor(n_way * n_shot, num_priors).cuda()
+                s_obj_t = torch.ByteTensor(n_way * n_shot, num_priors).cuda()
+            else:
+                s_loc_t = torch.Tensor(n_way * n_shot, num_priors, 4)
+                s_conf_t = torch.CharTensor(n_way * n_shot, num_priors)
+                s_obj_t = torch.ByteTensor(n_way * n_shot, num_priors)
 
-    print('Fine tuning imprinted matrix on', dataset.name)
-    for param in net.module.parameters():
+            # match priors with gt
+            for idx in range(n_way):
+                for idy in range(n_shot):
+                    truths = s_t[idx][idy][:, :-1].data  # [obj_num, 4]
+                    labels = s_t[idx][idy][:, -1].data  # [obj_num]
+                    defaults = priors.data  # [num_priors,4]
+                    match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, s_loc_t, s_conf_t, s_obj_t,
+                          idx * n_shot + idy)
+
+            cls_idx = s_conf_t[s_obj_t.byte()]
+            features = [s_conf_data.view(-1, num_priors, feature_dim)[s_obj_t.byte()].view(-1, feature_dim)]
+            if i == 0:
+                layer1 = composite(bn1, norm)
+                new_features = layer1(*features)
+                way_list = [torch.cat((way_list[i], new_features[cls_idx==i+1].view(-1, 60)), 0) for i in range(n_way)]
+            elif i == 1:
+                layer1 = composite(bn1, norm, fc1)
+                layer2 = composite(bn2, norm)
+                new_features = layer1(*features)
+                features.append(new_features)
+                new_features = layer2(*features)
+                way_list = [torch.cat((way_list[i], new_features[cls_idx==i+1].view(-1, 80)), 0) for i in range(n_way)]
+            else:
+                layer1 = composite(bn1, norm, fc1)
+                layer2 = composite(bn2, norm, fc2)
+                layer3 = composite(bn3, norm)
+                new_features = layer1(*features)
+                features.append(new_features)
+                new_features = layer2(*features)
+                features.append(new_features)
+                new_features = layer3(*features)
+                way_list = [torch.cat((way_list[i], new_features[cls_idx == i + 1].view(-1, 100)), 0) for i in range(n_way)]
+        way_list = [item.mean(0) for item in way_list]
+        if i == 0:
+            net.denselayer1.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 60]
+        elif i == 1:
+            net.denselayer2.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 80]
+        else:
+            net.denselayer3.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 100]
+
+    print('Fine tuning on ' + str(args.n_shot_task) + 'shot task')
+    for param in net.parameters():
         param.requires_grad = True
+
+    if args.ngpu > 1:
+        net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)), output_device=0)
 
     net.train()
     epoch = 0 + args.resume_epoch
@@ -320,7 +356,10 @@ def train(net):
         loss = loss_l + loss_c + loss_obj
         loss.backward()
         optimizer.step()
-        net.module.normalize()
+        if args.ngpu > 1:
+            net.module.normalize()
+        else:
+            net.normalize()
         loc_loss += loss_l.item()
         conf_loss += loss_c.item()
         obj_loss += loss_obj.item()

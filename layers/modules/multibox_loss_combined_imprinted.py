@@ -43,8 +43,10 @@ class MultiBoxLoss_combined(nn.Module):
         self.negpos_ratio = neg_pos
         self.neg_overlap = neg_overlap
         self.variance = [0.1, 0.2]
-        self.imprinted_matrix = net.imprinted_matrix
         self.scale = net.scale
+        self.denselayer1 = net.denselayer1
+        self.denselayer2 = net.denselayer2
+        self.denselayer3 = net.denselayer3
 
     def forward(self, predictions, priors, targets):
         """Multibox Loss
@@ -103,8 +105,11 @@ class MultiBoxLoss_combined(nn.Module):
         # Confidence Loss(cosine distance to classes center)
         # pos [num, num_priors]
         # conf_data [num, num_priors, feature_dim]
-        conf_data = conf_data / torch.norm(conf_data, dim=2, keepdim=True)  # [num, num_priors, feature_dim]
-        batch_conf = conf_data.view(-1, self.num_classes).mm(self.imprinted_matrix.t()) * self.scale  # [n_way, num_classes]
+        features = [conf_data.view(-1, self.num_classes)]
+        for i in range(3):
+            new_features = (self.denselayer1, self.denselayer2, self.denselayer3)[i](*features)
+            features.append(new_features)
+        batch_conf = new_features * self.scale  # [n_way, num_classes]
 
         # Compute max conf across batch for hard negative mining (logit-combined)
         batch_obj = obj_data.view(-1, 2)  # [n_way*n_shot*num_priors, 2]
