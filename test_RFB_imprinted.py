@@ -51,7 +51,7 @@ parser.add_argument('--retest', default=False, type=bool,
 args = parser.parse_args()
 
 if not os.path.exists(args.save_folder):
-    os.mkdir(args.save_folder)
+    os.makedirs(args.save_folder)
 
 if args.dataset == 'VOC':
     cfg = (VOC_300, VOC_512)[args.size == '512']
@@ -157,11 +157,13 @@ def test_net(save_folder, net, detector, cuda, test_support, test_query, transfo
                 scale = scale.cuda()
 
         _t['im_detect'].tic()
-
         out = net(x)      # forward pass
         q_loc_data, q_conf_data, q_obj_data = out # q_conf_data[1, num_priors, feature_dim]
-        q_conf_data = q_conf_data / torch.norm(q_conf_data, dim=2, keepdim=True)
-        q_conf = ((q_conf_data.squeeze().mm(net.imprinted_matrix.t())) * net.scale).unsqueeze(0) # [1, num_priors, n_way]
+        features = [q_conf_data.view(-1, feature_dim)]
+        for m in range(3):
+            new_features = (net.denselayer1, net.denselayer2, net.denselayer3)[m](*features)
+            features.append(new_features)
+        q_conf = (new_features * net.scale).unsqueeze(0)   # [1, num_priors, n_way]
         q_conf = nn.functional.softmax(q_conf, dim=-1) # [1, num_priors, num_classes-1]
         q_obj_data = nn.functional.softmax(q_obj_data, dim=-1) # [1, num_priors, 2]
         pred = q_loc_data, q_conf, q_obj_data

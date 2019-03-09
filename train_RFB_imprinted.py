@@ -192,7 +192,7 @@ def composite(bn, norm, fc=None):
     return function
 
 def train(net):
-    net.eval()
+    net.train()
     for param in net.parameters():
         param.requires_grad = False
 
@@ -205,12 +205,19 @@ def train(net):
         print('Only VOC is supported now!')
         return
 
-    bn1 = nn.BatchNorm1d(60, affine=False).cuda()
-    bn2 = nn.BatchNorm1d(80, affine=False).cuda()
-    bn3 = nn.BatchNorm1d(100, affine=False).cuda()
+    # bn1 = nn.BatchNorm1d(60, affine=False).cuda()
+    # bn2 = nn.BatchNorm1d(80, affine=False).cuda()
+    # bn3 = nn.BatchNorm1d(100, affine=False).cuda()
+    bn1 = net.denselayer1.bn
+    bn2 = net.denselayer2.bn
+    bn3 = net.denselayer3.bn
     norm = l2_norm(1).cuda()
     fc1 = net.denselayer1.fc
     fc2 = net.denselayer2.fc
+    for item in (bn1, bn2, bn3):
+        for key in item.state_dict():
+            if 'weight' in key:
+                item.state_dict()[key][...] = 1
 
     for i in range(3):
         print('Initializing the ' + ('first', 'second', 'third')[i] + ' layer...')
