@@ -13,3 +13,4 @@ build/
 
 weights/
 eval/
+.idea/

@@ -168,7 +168,7 @@ if args.cuda:
     net.cuda()
     cudnn.benchmark = True
 
-criterion = MultiBoxLoss_combined(feature_dim, overlap_threshold, True, 0, True, 3, 0.5, False, net)
+criterion = MultiBoxLoss_combined(feature_dim, overlap_threshold, True, 0, True, 3, 0.5, False)
 
 if args.log:
     logger = Logger(args.save_folder + 'logs')
@@ -241,7 +241,7 @@ def train(net):
                 s_img = s_img.cuda()
                 s_t = [[anno.cuda() for anno in cls_list] for cls_list in s_t]
 
-            out = net(s_img)
+            out = net(s_img, 'init')
 
             _, s_conf_data, s_conf_obj = out
 

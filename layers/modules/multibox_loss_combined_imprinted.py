@@ -32,7 +32,7 @@ class MultiBoxLoss_combined(nn.Module):
     """
 
 
-    def __init__(self, num_classes, overlap_thresh, prior_for_matching, bkg_label, neg_mining, neg_pos, neg_overlap, encode_target, net):
+    def __init__(self, num_classes, overlap_thresh, prior_for_matching, bkg_label, neg_mining, neg_pos, neg_overlap, encode_target):
         super(MultiBoxLoss_combined, self).__init__()
         self.num_classes = num_classes
         self.threshold = overlap_thresh
@@ -43,10 +43,10 @@ class MultiBoxLoss_combined(nn.Module):
         self.negpos_ratio = neg_pos
         self.neg_overlap = neg_overlap
         self.variance = [0.1, 0.2]
-        self.scale = net.scale
-        self.denselayer1 = net.denselayer1
-        self.denselayer2 = net.denselayer2
-        self.denselayer3 = net.denselayer3
+        # self.scale = net.scale
+        # self.denselayer1 = net.denselayer1
+        # self.denselayer2 = net.denselayer2
+        # self.denselayer3 = net.denselayer3
 
     def forward(self, predictions, priors, targets):
         """Multibox Loss
@@ -66,11 +66,10 @@ class MultiBoxLoss_combined(nn.Module):
                                                     # obj_data[batch_size, num_priors, 2]
 
         num_priors = priors.size(0)
-        n_way = conf_data.size(0)
-        n_shot = conf_data.size(1)
+        n_way = loc_data.size(0)
+        n_shot = loc_data.size(1)
         num = n_way * n_shot
         loc_data = loc_data.view(-1, num_priors, 4)
-        conf_data = conf_data.view(-1, num_priors, self.num_classes)
         obj_data = obj_data.view(-1, num_priors, 2)
 
         # match priors (default boxes) and ground truth boxes
@@ -105,11 +104,7 @@ class MultiBoxLoss_combined(nn.Module):
         # Confidence Loss(cosine distance to classes center)
         # pos [num, num_priors]
         # conf_data [num, num_priors, feature_dim]
-        features = [conf_data.view(-1, self.num_classes)]
-        for i in range(3):
-            new_features = (self.denselayer1, self.denselayer2, self.denselayer3)[i](*features)
-            features.append(new_features)
-        batch_conf = new_features * self.scale  # [n_way, num_classes]
+        batch_conf = conf_data.view(-1, 20)  # [n_way, num_classes]
 
         # Compute max conf across batch for hard negative mining (logit-combined)
         batch_obj = obj_data.view(-1, 2)  # [n_way*n_shot*num_priors, 2]

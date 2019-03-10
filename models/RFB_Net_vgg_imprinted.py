@@ -193,11 +193,11 @@ class RFBNet(nn.Module):
         self.conf = nn.ModuleList(head[1])
         self.obj = nn.ModuleList(head[2])
         self.scale = nn.Parameter(torch.FloatTensor([10]))
-        self.add_module('denselayer1', _DenseLayer(60, 20, 0.9))
-        self.add_module('denselayer2', _DenseLayer(80, 20, 0.9))
+        self.add_module('denselayer1', _DenseLayer(60, 20, 0))
+        self.add_module('denselayer2', _DenseLayer(80, 20, 0))
         self.add_module('denselayer3', _DenseLayer(100, 20, 0))
 
-    def forward(self, x):
+    def forward(self, x, phase=None):
         """Applies network layers and ops on input image(s) x.
 
         Args:
@@ -221,25 +221,17 @@ class RFBNet(nn.Module):
         loc = list()
         conf = list()
         obj = list()
-        if len(x) == 2:
-            meta_learning = True
-            n_way = x[0].size(0)
-            n_support = x[0].size(1)
-            n_query = x[1].size(1)
-            x = torch.cat(x, 1).view(-1, 3, 300, 300)
+
+        if x.dim()==5:
+            n_way = x.size(0)
+            per_way = x.size(1)
+            x = x.view(-1, 3, 300, 300)
         else:
-            meta_learning = False
-            if x.dim()==5:
-                n_way = x.size(0)
-                per_way = x.size(1)
-                x = x.view(-1, 3, 300, 300)
-            else:
-                n_way = None
+            n_way = None
+            num = x.size(0)
 
         # apply vgg up to conv4_3 relu
         for k in range(23):
-            # for param in self.base[k].parameters():
-            #     a = param
             x = self.base[k](x)
 
         s = self.Norm(x)
@@ -265,30 +257,24 @@ class RFBNet(nn.Module):
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
         obj = torch.cat([o.view(o.size(0), -1) for o in obj], 1)
 
+        if phase is None:
+            features = [conf.view(-1, self.num_classes)]
+            for i in range(3):
+                new_features = (self.denselayer1, self.denselayer2, self.denselayer3)[i](*features)
+                features.append(new_features)
+            conf = new_features * self.scale  # [num*num_priors, 20]
+
         # 把所有的feature map的输出拼合起来
-        if meta_learning:
-            loc = loc.view(n_way, n_support + n_query, -1, 4)
-            conf = conf.view(n_way, n_support + n_query, -1, self.num_classes)
-            obj = obj.view(n_way, n_support + n_query, -1, 2)
-            s_loc = loc[:, :n_support]   # [n_way, n_support, num_priors, 4]
-            s_conf = conf[:, :n_support] # [n_way, n_support, num_priors, num_classes]
-            s_obj = obj[:, :n_support]   # [n_way, n_support, num_priors, 2]
-            q_loc = loc[:, n_support:]   # [n_way, n_query, num_priors, 4]
-            q_conf = conf[:, n_support:] # [n_way, n_query, num_priors, num_classes]
-            q_obj = obj[:, n_support:]   # [n_way, n_query, num_priors, 2]
-
-            output = (s_loc, s_conf, s_obj, q_loc, q_conf, q_obj)
+        if n_way:
+            loc = loc.view(n_way, per_way, -1, 4)
+            conf = conf.view(n_way, per_way, -1, self.num_classes if phase == 'init' else 20)
+            obj = obj.view(n_way, per_way, -1, 2)
         else:
-            if n_way:
-                loc = loc.view(n_way, per_way, -1, 4)
-                conf = conf.view(n_way, per_way, -1, self.num_classes)
-                obj = obj.view(n_way, per_way, -1, 2)
-            else:
-                loc = loc.view(loc.size(0), -1, 4)
-                conf = conf.view(conf.size(0), -1, self.num_classes)
-                obj = obj.view(obj.size(0), -1, 2)
+            loc = loc.view(num, -1, 4)
+            conf = conf.view(num, -1, self.num_classes if phase == 'init' else 20)
+            obj = obj.view(num, -1, 2)
 
-            output = (loc, conf, obj)
+        output = (loc, conf, obj)
 
         return output
 
