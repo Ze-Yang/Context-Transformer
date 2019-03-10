@@ -35,13 +35,13 @@ parser.add_argument('--jaccard_threshold', default=0.5,
                     type=float, help='Min Jaccard index for matching')
 parser.add_argument('-b', '--batch_size', default=64,
                     type=int, help='Batch size for training')
-parser.add_argument('--n_shot_task', type=int, default=1,
+parser.add_argument('--n_shot_task', type=int, default=5,
                     help="number of support examples per class on target domain")
-parser.add_argument('--n_shot', type=int, default=1,
+parser.add_argument('--n_shot', type=int, default=3,
                     help="number of support examples per class during training (default: 1)")
 parser.add_argument('--support_episodes', type=int, default=50,
                     help="number of center calculation per support image (default: 100)")
-parser.add_argument('--train_episodes', type=int, default=50,
+parser.add_argument('--train_episodes', type=int, default=100,
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
@@ -49,7 +49,7 @@ parser.add_argument('--cuda', default=True,
                     type=bool, help='Use cuda to train model')
 parser.add_argument('--ngpu', default=1, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate',
-                    default=2e-3, type=float, help='initial learning rate')
+                    default=4e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument(
     '--resume_net', default=None, help='resume net for retraining')
@@ -146,9 +146,9 @@ else:
     net.load_state_dict(new_state_dict, strict=False)
 
 optimizer = optim.SGD([
-                            {'params': net.base.parameters()},
-                            {'params': net.Norm.parameters()},
-                            {'params': net.extras.parameters()},
+                            {'params': net.base.parameters(), 'lr':0.1*args.lr},
+                            {'params': net.Norm.parameters(), 'lr':0.5*args.lr},
+                            {'params': net.extras.parameters(), 'lr':0.5*args.lr},
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
@@ -211,7 +211,7 @@ def train(net):
     bn1 = net.denselayer1.bn
     bn2 = net.denselayer2.bn
     bn3 = net.denselayer3.bn
-    norm = l2_norm(1).cuda()
+    norm = net.denselayer1.norm
     fc1 = net.denselayer1.fc
     fc2 = net.denselayer2.fc
     for item in (bn1, bn2, bn3):
@@ -243,7 +243,7 @@ def train(net):
 
             out = net(s_img, 'init')
 
-            _, s_conf_data, s_conf_obj = out
+            _, s_conf_data, _ = out
 
             if args.cuda:
                 s_loc_t = torch.Tensor(n_way * n_shot, num_priors, 4).cuda()
@@ -306,7 +306,7 @@ def train(net):
     epoch_size = args.train_episodes
     max_iter = args.max_epoch * epoch_size
 
-    milestones_VOC = [20, 30, 35]
+    milestones_VOC = [30, 35]
     milestones_COCO = [30, 60, 90]
     milestones = (milestones_VOC, milestones_COCO)[args.dataset == 'COCO']
 
