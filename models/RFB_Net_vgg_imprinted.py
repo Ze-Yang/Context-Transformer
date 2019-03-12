@@ -14,7 +14,7 @@ class BasicConv(nn.Module):
         super(BasicConv, self).__init__()
         self.out_channels = out_planes
         self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, groups=groups, bias=bias)
-        self.bn = nn.BatchNorm2d(out_planes,eps=1e-5, momentum=0.1, affine=True) if bn else None
+        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
         self.relu = nn.ReLU(inplace=True) if relu else None
 
     def forward(self, x):
@@ -127,10 +127,10 @@ class l2_norm(nn.Module):
         return output
 
 
-def composite_fc(bn, norm, fc):
+def composite_fc(bn, relu, norm, fc):
     def fc_function(*inputs):
         concated_features = torch.cat(inputs, 1)
-        output = fc(norm(bn(concated_features)))
+        output = fc(norm(relu(bn(concated_features))))
         return output
 
     return fc_function
@@ -140,13 +140,14 @@ class _DenseLayer(nn.Module):
     def __init__(self, num_input_features, growth_rate, drop_rate): # bn_size: bottleneck_size
         super(_DenseLayer, self).__init__()
         self.add_module('bn', nn.BatchNorm1d(num_input_features)),
+        self.add_module('relu', nn.ReLU(inplace=True))
         self.add_module('norm', l2_norm(1)),
         # self.add_module('relu', nn.ReLU(inplace=True)),
         self.add_module('fc', nn.Linear(num_input_features, growth_rate, bias=False)),
         self.drop_rate = drop_rate
 
     def forward(self, *prev_features):
-        fc_function = composite_fc(self.bn, self.norm, self.fc)
+        fc_function = composite_fc(self.bn, self.relu, self.norm, self.fc)
         new_features = fc_function(*prev_features)
         if self.drop_rate > 0:
             new_features = F.dropout(new_features, p=self.drop_rate, training=self.training)

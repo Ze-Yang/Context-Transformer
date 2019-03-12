@@ -8,9 +8,8 @@ import torch.backends.cudnn as cudnn
 import torch.nn.init as init
 import argparse
 import torch.utils.data as data
-from data import VOC_AnnotationTransform, COCO_AnnotationTransform, COCODetection, VOCDetection, BaseTransform, VOC_300,VOC_512,COCO_300,COCO_512,\
-    COCO_mobile_300, EpisodicBatchSampler, detection_collate, VOCroot, COCOroot, preproc
-from models.RFB_Net_vgg_imprinted import l2_norm
+from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, BaseTransform, preproc, EpisodicBatchSampler
+from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
 from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
 from layers.functions import PriorBox
 from utils.box_utils import match
@@ -33,15 +32,13 @@ parser.add_argument(
     '--basenet', default='./weights/vgg16_reducedfc.pth', help='pretrained base model')
 parser.add_argument('--jaccard_threshold', default=0.5,
                     type=float, help='Min Jaccard index for matching')
-parser.add_argument('-b', '--batch_size', default=64,
+parser.add_argument('-b', '--batch_size', default=50,
                     type=int, help='Batch size for training')
 parser.add_argument('--n_shot_task', type=int, default=5,
                     help="number of support examples per class on target domain")
-parser.add_argument('--n_shot', type=int, default=3,
-                    help="number of support examples per class during training (default: 1)")
 parser.add_argument('--support_episodes', type=int, default=50,
                     help="number of center calculation per support image (default: 100)")
-parser.add_argument('--train_episodes', type=int, default=100,
+parser.add_argument('--train_episodes', type=int, default=40,
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
@@ -49,13 +46,13 @@ parser.add_argument('--cuda', default=True,
                     type=bool, help='Use cuda to train model')
 parser.add_argument('--ngpu', default=1, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate',
-                    default=4e-3, type=float, help='initial learning rate')
+                    default=2e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument(
     '--resume_net', default=None, help='resume net for retraining')
 parser.add_argument('--resume_epoch', default=0,
                     type=int, help='resume iter for retraining')
-parser.add_argument('-max', '--max_epoch', default=40,
+parser.add_argument('-max', '--max_epoch', default=30,
                     type=int, help='max epoch for retraining')
 parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
@@ -95,7 +92,7 @@ num_classes = 21
 overlap_threshold = 0.5
 feature_dim = 60
 n_way = 20
-n_shot = args.n_shot
+num = args.batch_size
 
 net = build_net('train', img_dim, feature_dim, overlap_threshold)
 print(net)
@@ -146,9 +143,9 @@ else:
     net.load_state_dict(new_state_dict, strict=False)
 
 optimizer = optim.SGD([
-                            {'params': net.base.parameters(), 'lr':0.1*args.lr},
-                            {'params': net.Norm.parameters(), 'lr':0.5*args.lr},
-                            {'params': net.extras.parameters(), 'lr':0.5*args.lr},
+                            {'params': net.base.parameters(), 'lr': args.lr},
+                            {'params': net.Norm.parameters(), 'lr': args.lr},
+                            {'params': net.extras.parameters(), 'lr': args.lr},
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
@@ -168,7 +165,7 @@ if args.cuda:
     net.cuda()
     cudnn.benchmark = True
 
-criterion = MultiBoxLoss_combined(feature_dim, overlap_threshold, True, 0, True, 3, 0.5, False)
+criterion = MultiBoxLoss_combined(num_classes-1, overlap_threshold, True, 0, True, 3, 0.5, False)
 
 if args.log:
     logger = Logger(args.save_folder + 'logs')
@@ -198,9 +195,11 @@ def train(net):
 
     print('Loading Dataset...')
     if args.dataset == 'VOC':
-        dataset = VOCDetection(VOCroot, train_sets, preproc(img_dim, rgb_means, p),
-                               VOC_AnnotationTransform(), n_shot, 0,
-                               phase='test_support', n_shot_task=args.n_shot_task)
+        # dataset_init = VOCDetection(VOCroot, train_sets, preproc(img_dim, rgb_means, p),
+        #                        VOC_AnnotationTransform(), n_shot, 0,
+        #                        phase='test_support', n_shot_task=args.n_shot_task)
+        dataset = VOCDetection(VOCroot, train_sets, preproc(
+            img_dim, rgb_means, p), AnnotationTransform(), n_shot_task=args.n_shot_task)
     else:
         print('Only VOC is supported now!')
         return
@@ -221,50 +220,50 @@ def train(net):
 
     for i in range(3):
         print('Initializing the ' + ('first', 'second', 'third')[i] + ' layer...')
-        sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=len(dataset),
+        sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
                                        n_episodes=args.support_episodes, phase='train')
         batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
-                                              collate_fn=lambda x: detection_collate(x, 'test')))
+                                              collate_fn=detection_collate))
 
         if args.cuda:
-            way_list = [torch.empty(0, feature_dim).cuda() for _ in range(n_way)]
+            way_list = [torch.empty(0).cuda() for _ in range(n_way)]
         else:
-            way_list = [torch.empty(0, feature_dim) for _ in range(n_way)]
+            way_list = [torch.empty(0) for _ in range(n_way)]
 
         for _ in range(args.support_episodes):
             # load support data
             # for i in range(10):
-            s_img, s_t = next(batch_iterator)
-            # vis_picture_1(s_img, s_t)
+            images, targets = next(batch_iterator)
+            # vis_picture(images, s_t)
 
             if args.cuda:
-                s_img = s_img.cuda()
-                s_t = [[anno.cuda() for anno in cls_list] for cls_list in s_t]
-
-            out = net(s_img, 'init')
-
-            _, s_conf_data, _ = out
-
-            if args.cuda:
-                s_loc_t = torch.Tensor(n_way * n_shot, num_priors, 4).cuda()
-                s_conf_t = torch.CharTensor(n_way * n_shot, num_priors).cuda()
-                s_obj_t = torch.ByteTensor(n_way * n_shot, num_priors).cuda()
+                images = images.cuda()
+                targets = [anno.cuda() for anno in targets]
             else:
-                s_loc_t = torch.Tensor(n_way * n_shot, num_priors, 4)
-                s_conf_t = torch.CharTensor(n_way * n_shot, num_priors)
-                s_obj_t = torch.ByteTensor(n_way * n_shot, num_priors)
+                targets = [anno for anno in targets]
+
+            out = net(images, 'init')
+
+            _, conf_data, _ = out
+
+            if args.cuda:
+                loc_t = torch.Tensor(num, num_priors, 4).cuda()
+                conf_t = torch.CharTensor(num, num_priors).cuda()
+                obj_t = torch.ByteTensor(num, num_priors).cuda()
+            else:
+                loc_t = torch.Tensor(num, num_priors, 4)
+                conf_t = torch.CharTensor(num, num_priors)
+                obj_t = torch.ByteTensor(num, num_priors)
 
             # match priors with gt
-            for idx in range(n_way):
-                for idy in range(n_shot):
-                    truths = s_t[idx][idy][:, :-1].data  # [obj_num, 4]
-                    labels = s_t[idx][idy][:, -1].data  # [obj_num]
-                    defaults = priors.data  # [num_priors,4]
-                    match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, s_loc_t, s_conf_t, s_obj_t,
-                          idx * n_shot + idy)
+            for idx in range(num):  # batch_size
+                truths = targets[idx][:, :-1].data  # [obj_num, 4]
+                labels = targets[idx][:, -1].data  # [obj_num]
+                defaults = priors.data  # [num_priors,4]
+                match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, loc_t, conf_t, obj_t, idx)
 
-            cls_idx = s_conf_t[s_obj_t.byte()]
-            features = [s_conf_data.view(-1, num_priors, feature_dim)[s_obj_t.byte()].view(-1, feature_dim)]
+            cls_idx = conf_t[obj_t.byte()]
+            features = [conf_data[obj_t.byte()].view(-1, feature_dim)]
             if i == 0:
                 layer1 = composite(bn1, norm)
                 new_features = layer1(*features)
@@ -306,7 +305,7 @@ def train(net):
     epoch_size = args.train_episodes
     max_iter = args.max_epoch * epoch_size
 
-    milestones_VOC = [30, 35]
+    milestones_VOC = [15, 20, 25]
     milestones_COCO = [30, 60, 90]
     milestones = (milestones_VOC, milestones_COCO)[args.dataset == 'COCO']
 
@@ -320,14 +319,14 @@ def train(net):
 
     first_or_not = 1
 
-    sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=len(dataset),
+    sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
                                    n_episodes=args.train_episodes, phase='train')
 
     for iteration in range(start_iter, max_iter):
         if iteration % epoch_size == 0:
             # create batch iterator
             batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
-                                                  collate_fn=lambda x: detection_collate(x, 'test')))
+                                                  collate_fn=detection_collate))
             if not first_or_not:
                 print('Epoch' + repr(epoch) + ' Finished! || L: %.4f C: %.4f O: %.4f' % (
                     loc_loss / epoch_size, conf_loss / epoch_size, obj_loss / epoch_size)
@@ -346,13 +345,13 @@ def train(net):
         # load train data
         images, targets = next(batch_iterator)  # [n_way, n_shot, 3, im_size, im_size]
 
-        # vis_picture_1(images, targets)
+        # vis_picture(images, targets)
 
         if args.cuda:
             images = images.cuda()
-            targets = [[anno.cuda() for anno in cls_list] for cls_list in targets]
+            targets = [anno.cuda() for anno in targets]
         else:
-            targets = [[anno.cuda() for anno in cls_list] for cls_list in targets]
+            targets = [anno for anno in targets]
 
         # forward
         out = net(images)

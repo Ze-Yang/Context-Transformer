@@ -31,12 +31,6 @@ parser.add_argument('-s', '--size', default='300',
                     help='300 or 512 input size.')
 parser.add_argument('-d', '--dataset', default='VOC',
                     help='VOC or COCO version')
-parser.add_argument('--n_shot', type=int, default=1,
-                    help="number of support examples per class (default: 1)")
-parser.add_argument('--support_episodes', type=int, default=50,
-                    help="number of center calculation per support image (default: 100)")
-parser.add_argument('--num_workers', default=1,
-                    type=int, help='Number of workers used in dataloading')
 parser.add_argument('-m', '--trained_model', default='weights/RFB_vgg_VOC_epoches_190.pth',
                     type=str, help='Trained state_dict file path to open')
 parser.add_argument('--save_folder', default='eval/', type=str,
@@ -78,16 +72,15 @@ rgb_means = ((104, 117, 123),(103.94,116.78,123.68))[args.version == 'RFB_mobile
 num_classes = (21, 61)[args.dataset == 'COCO']
 overlap_threshold = 0.5
 n_way = num_classes - 1
-n_shot = args.n_shot
 num_priors = priors.size(0)
 p = 0.6
 
-def test_net(save_folder, net, detector, cuda, test_support, test_query, transform, max_per_image=300, thresh=0.005):
+def test_net(save_folder, net, detector, cuda, dataset, transform, max_per_image=300, thresh=0.005):
 
     if not os.path.exists(save_folder):
-        os.mkdir(save_folder)
+        os.makedirs(save_folder)
     # dump predictions and assoc. ground truth to text file for now
-    num_images = len(test_query)
+    num_images = len(dataset)
 
     all_boxes = [[[] for _ in range(num_images)]
                  for _ in range(num_classes)]
@@ -113,7 +106,7 @@ def test_net(save_folder, net, detector, cuda, test_support, test_query, transfo
         #             vis_picture_2(img, boxes, k)
 
         print('Evaluating detections')
-        test_query.evaluate_detections(all_boxes, save_folder)
+        dataset.evaluate_detections(all_boxes, save_folder)
         return
 
 
@@ -147,7 +140,7 @@ def test_net(save_folder, net, detector, cuda, test_support, test_query, transfo
     # net = torch.nn.DataParallel(net, device_ids=list(range(1)), output_device=0)
 
     for i in range(num_images):
-        img = test_query.pull_image(i)
+        img = dataset.pull_image(i)
         scale = torch.Tensor([img.shape[1], img.shape[0],
                              img.shape[1], img.shape[0]])
         with torch.no_grad():
@@ -157,6 +150,7 @@ def test_net(save_folder, net, detector, cuda, test_support, test_query, transfo
                 scale = scale.cuda()
 
         _t['im_detect'].tic()
+
         out = net(x)      # forward pass
         q_loc_data, q_conf_data, q_obj_data = out # q_conf_data[1, num_priors, feature_dim]
         q_conf = nn.functional.softmax(q_conf_data, dim=-1) # [1, num_priors, num_classes-1]
@@ -207,7 +201,7 @@ def test_net(save_folder, net, detector, cuda, test_support, test_query, transfo
         pickle.dump(all_boxes, f, pickle.HIGHEST_PROTOCOL)
 
     print('Evaluating detections')
-    test_query.evaluate_detections(all_boxes, save_folder)
+    dataset.evaluate_detections(all_boxes, save_folder)
 
 
 def vis_picture_1(imgs, targets):
@@ -320,16 +314,10 @@ if __name__ == '__main__':
     print(net)
     # load data
     if args.dataset == 'VOC':
-        train_sets = [('2007', 'trainval'), ('2012', 'trainval')]
-        test_support = VOCDetection(VOCroot, train_sets, preproc(img_dim, rgb_means, p),
-                                  VOC_AnnotationTransform(), args.n_shot, 0, phase='test_support', n_shot_task=args.n_shot)
-        test_query = VOCDetection(VOCroot, [('2007', 'test')], None,
+        dataset = VOCDetection(VOCroot, [('2007', 'test')], None,
                                 VOC_AnnotationTransform(), phase='test_query')
     elif args.dataset == 'COCO':
-        train_sets = [('2014', 'trainval')]
-        test_support = COCODetection(COCOroot, train_sets, preproc(img_dim, rgb_means, p),
-                                    COCO_AnnotationTransform(), args.n_shot, 0, phase='test_support')
-        test_query = COCODetection(COCOroot, [('2014', 'test')], None,
+        dataset = COCODetection(COCOroot, [('2014', 'test')], None,
                                   COCO_AnnotationTransform(), phase='test_query')
     else:
         print('Only VOC and COCO are supported now!')
@@ -345,6 +333,6 @@ if __name__ == '__main__':
     top_k = 200
     detector = Detect(num_classes, 0, cfg)
     # save_folder = os.path.join(args.save_folder, args.dataset)
-    test_net(args.save_folder, net, detector, args.cuda, test_support, test_query,
+    test_net(args.save_folder, net, detector, args.cuda, dataset,
              BaseTransform(net.size, rgb_means, (2, 0, 1)),
              top_k, thresh=0.01)
