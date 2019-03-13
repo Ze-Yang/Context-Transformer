@@ -127,10 +127,10 @@ class l2_norm(nn.Module):
         return output
 
 
-def composite_fc(bn, relu, norm, fc):
+def composite_fc(bn, norm, fc):
     def fc_function(*inputs):
         concated_features = torch.cat(inputs, 1)
-        output = fc(norm(relu(bn(concated_features))))
+        output = fc(norm(bn(concated_features)))
         return output
 
     return fc_function
@@ -140,14 +140,13 @@ class _DenseLayer(nn.Module):
     def __init__(self, num_input_features, growth_rate, drop_rate): # bn_size: bottleneck_size
         super(_DenseLayer, self).__init__()
         self.add_module('bn', nn.BatchNorm1d(num_input_features)),
-        self.add_module('relu', nn.ReLU(inplace=True))
-        self.add_module('norm', l2_norm(1)),
         # self.add_module('relu', nn.ReLU(inplace=True)),
+        self.add_module('norm', l2_norm(1)),
         self.add_module('fc', nn.Linear(num_input_features, growth_rate, bias=False)),
         self.drop_rate = drop_rate
 
     def forward(self, *prev_features):
-        fc_function = composite_fc(self.bn, self.relu, self.norm, self.fc)
+        fc_function = composite_fc(self.bn, self.norm, self.fc)
         new_features = fc_function(*prev_features)
         if self.drop_rate > 0:
             new_features = F.dropout(new_features, p=self.drop_rate, training=self.training)

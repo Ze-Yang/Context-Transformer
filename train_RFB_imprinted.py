@@ -204,9 +204,6 @@ def train(net):
         print('Only VOC is supported now!')
         return
 
-    # bn1 = nn.BatchNorm1d(60, affine=False).cuda()
-    # bn2 = nn.BatchNorm1d(80, affine=False).cuda()
-    # bn3 = nn.BatchNorm1d(100, affine=False).cuda()
     bn1 = net.denselayer1.bn
     bn2 = net.denselayer2.bn
     bn3 = net.denselayer3.bn
