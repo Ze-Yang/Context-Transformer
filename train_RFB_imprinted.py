@@ -10,6 +10,7 @@ import argparse
 import torch.utils.data as data
 from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, BaseTransform, preproc, EpisodicBatchSampler
 from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
+from models.RFB_Net_vgg_imprinted import l2_norm
 from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
 from layers.functions import PriorBox
 from utils.box_utils import match
@@ -152,7 +153,7 @@ optimizer = optim.SGD([
                             {'params': net.denselayer1.parameters()},
                             {'params': net.denselayer2.parameters()},
                             {'params': net.denselayer3.parameters()},
-                            {'params': net.scale},
+                            # {'params': net.scale},
                         ], lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 # optimizer = optim.SGD(net.parameters(), lr=args.lr,
 #                       momentum=args.momentum, weight_decay=args.weight_decay)
@@ -207,7 +208,7 @@ def train(net):
     bn1 = net.denselayer1.bn
     bn2 = net.denselayer2.bn
     bn3 = net.denselayer3.bn
-    norm = net.denselayer1.norm
+    norm = l2_norm(1).cuda()
     fc1 = net.denselayer1.fc
     fc2 = net.denselayer2.fc
     for item in (bn1, bn2, bn3):
@@ -284,12 +285,13 @@ def train(net):
                 way_list = [torch.cat((way_list[i], new_features[cls_idx == i + 1].view(-1, 100)), 0) for i in range(n_way)]
         way_list = [item.mean(0) for item in way_list]
         if i == 0:
-            net.denselayer1.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 60]
+            net.denselayer1.fc.weight.data = torch.stack(way_list, 0)  # [20, 60]
         elif i == 1:
-            net.denselayer2.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 80]
+            net.denselayer2.fc.weight.data = torch.stack(way_list, 0)  # [20, 80]
         else:
-            net.denselayer3.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 100]
-
+            net.denselayer3.fc.weight.data = torch.stack(way_list, 0)  # [20, 100]
+    # for key in net.conf.state_dict():
+    #     a = torch.norm(net.conf.state_dict()[key], dim=1)
     print('Fine tuning on ' + str(args.n_shot_task) + 'shot task')
     for param in net.parameters():
         param.requires_grad = True
@@ -359,10 +361,10 @@ def train(net):
         loss = loss_l + loss_c + loss_obj
         loss.backward()
         optimizer.step()
-        if args.ngpu > 1:
-            net.module.normalize()
-        else:
-            net.normalize()
+        # if args.ngpu > 1:
+        #     net.module.normalize()
+        # else:
+        #     net.normalize()
         loc_loss += loss_l.item()
         conf_loss += loss_c.item()
         obj_loss += loss_obj.item()
