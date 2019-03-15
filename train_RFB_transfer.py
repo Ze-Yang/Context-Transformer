@@ -16,6 +16,7 @@ from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
 from layers.modules.multibox_loss_combined_tf import MultiBoxLoss_combined
 from layers.functions import PriorBox
 import time
+from logger import Logger
 from data.voc0712_meta import VOC_CLASSES
 from data.coco_voc_form import COCO_CLASSES
 # torch.cuda.set_device(7)
@@ -35,9 +36,9 @@ parser.add_argument('--jaccard_threshold', default=0.5,
                     type=float, help='Min Jaccard index for matching')
 parser.add_argument('-b', '--batch_size', default=64,
                     type=int, help='Batch size for training')
-parser.add_argument('--n_shot_task', type=int, default=10,
+parser.add_argument('--n_shot_task', type=int, default=5,
                     help="number of support examples per class on target domain")
-parser.add_argument('--train_episodes', type=int, default=200,
+parser.add_argument('--train_episodes', type=int, default=100,
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
@@ -57,7 +58,7 @@ parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
 parser.add_argument('--gamma', default=0.1,
                     type=float, help='Gamma update for SGD')
-parser.add_argument('--log_iters', default=True,
+parser.add_argument('--log', default=False,
                     type=bool, help='Print the loss at each iteration')
 parser.add_argument('--save_folder', default='./weights/',
                     help='Location to save checkpoint models')
@@ -194,6 +195,10 @@ if args.cuda:
 
 # criterion = MultiBoxLoss(num_classes-1, 0.5, True, 0, True, 3, 0.5, False)
 criterion = MultiBoxLoss_combined(num_classes - 1, overlap_threshold, True, 0, True, 3, 0.5, False)
+
+if args.log:
+    logger = Logger(args.save_folder + 'logs')
+
 priorbox = PriorBox(cfg)
 with torch.no_grad():
     priors = priorbox.forward()
@@ -292,6 +297,11 @@ def train():
                       repr(iteration) + ' || L: %.4f C: %.4f O: %.4f ||' % (
                           loss_l.item(), loss_c.item(), loss_obj.item()) +
                       ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f, %.8f' % (lr[0], lr[3]))
+                if args.log:
+                    logger.scalar_summary('loc_loss', loss_l.item(), iteration)
+                    logger.scalar_summary('conf_loss', loss_c.item(), iteration)
+                    logger.scalar_summary('obj_loss', loss_obj.item(), iteration)
+                    logger.scalar_summary('lr', max(lr), iteration)
             t0 = time.time()
 
         first_or_not = 0

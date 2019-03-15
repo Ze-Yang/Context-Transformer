@@ -10,7 +10,6 @@ import argparse
 import torch.utils.data as data
 from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, BaseTransform, preproc, EpisodicBatchSampler
 from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
-from models.RFB_Net_vgg_imprinted import l2_norm
 from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
 from layers.functions import PriorBox
 from utils.box_utils import match
@@ -33,13 +32,13 @@ parser.add_argument(
     '--basenet', default='./weights/vgg16_reducedfc.pth', help='pretrained base model')
 parser.add_argument('--jaccard_threshold', default=0.5,
                     type=float, help='Min Jaccard index for matching')
-parser.add_argument('-b', '--batch_size', default=50,
+parser.add_argument('-b', '--batch_size', default=64,
                     type=int, help='Batch size for training')
 parser.add_argument('--n_shot_task', type=int, default=5,
                     help="number of support examples per class on target domain")
 parser.add_argument('--support_episodes', type=int, default=50,
                     help="number of center calculation per support image (default: 100)")
-parser.add_argument('--train_episodes', type=int, default=40,
+parser.add_argument('--train_episodes', type=int, default=100,
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
@@ -47,13 +46,13 @@ parser.add_argument('--cuda', default=True,
                     type=bool, help='Use cuda to train model')
 parser.add_argument('--ngpu', default=1, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate',
-                    default=2e-3, type=float, help='initial learning rate')
+                    default=4e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument(
     '--resume_net', default=None, help='resume net for retraining')
 parser.add_argument('--resume_epoch', default=0,
                     type=int, help='resume iter for retraining')
-parser.add_argument('-max', '--max_epoch', default=30,
+parser.add_argument('-max', '--max_epoch', default=40,
                     type=int, help='max epoch for retraining')
 parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
@@ -144,16 +143,16 @@ else:
     net.load_state_dict(new_state_dict, strict=False)
 
 optimizer = optim.SGD([
-                            {'params': net.base.parameters(), 'lr': args.lr},
-                            {'params': net.Norm.parameters(), 'lr': args.lr},
-                            {'params': net.extras.parameters(), 'lr': args.lr},
+                            {'params': net.base.parameters(), 'lr': 0.1*args.lr},
+                            {'params': net.Norm.parameters(), 'lr': 0.5*args.lr},
+                            {'params': net.extras.parameters(), 'lr': 0.5*args.lr},
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
                             {'params': net.denselayer1.parameters()},
                             {'params': net.denselayer2.parameters()},
                             {'params': net.denselayer3.parameters()},
-                            # {'params': net.scale},
+                            {'params': net.scale},
                         ], lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 # optimizer = optim.SGD(net.parameters(), lr=args.lr,
 #                       momentum=args.momentum, weight_decay=args.weight_decay)
@@ -208,7 +207,7 @@ def train(net):
     bn1 = net.denselayer1.bn
     bn2 = net.denselayer2.bn
     bn3 = net.denselayer3.bn
-    norm = l2_norm(1).cuda()
+    norm = net.denselayer3.norm
     fc1 = net.denselayer1.fc
     fc2 = net.denselayer2.fc
     for item in (bn1, bn2, bn3):
@@ -285,13 +284,12 @@ def train(net):
                 way_list = [torch.cat((way_list[i], new_features[cls_idx == i + 1].view(-1, 100)), 0) for i in range(n_way)]
         way_list = [item.mean(0) for item in way_list]
         if i == 0:
-            net.denselayer1.fc.weight.data = torch.stack(way_list, 0)  # [20, 60]
+            net.denselayer1.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 60]
         elif i == 1:
-            net.denselayer2.fc.weight.data = torch.stack(way_list, 0)  # [20, 80]
+            net.denselayer2.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 80]
         else:
-            net.denselayer3.fc.weight.data = torch.stack(way_list, 0)  # [20, 100]
-    # for key in net.conf.state_dict():
-    #     a = torch.norm(net.conf.state_dict()[key], dim=1)
+            net.denselayer3.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 100]
+
     print('Fine tuning on ' + str(args.n_shot_task) + 'shot task')
     for param in net.parameters():
         param.requires_grad = True
@@ -304,7 +302,7 @@ def train(net):
     epoch_size = args.train_episodes
     max_iter = args.max_epoch * epoch_size
 
-    milestones_VOC = [15, 20, 25]
+    milestones_VOC = [30, 35]
     milestones_COCO = [30, 60, 90]
     milestones = (milestones_VOC, milestones_COCO)[args.dataset == 'COCO']
 
@@ -361,10 +359,10 @@ def train(net):
         loss = loss_l + loss_c + loss_obj
         loss.backward()
         optimizer.step()
-        # if args.ngpu > 1:
-        #     net.module.normalize()
-        # else:
-        #     net.normalize()
+        if args.ngpu > 1:
+            net.module.normalize()
+        else:
+            net.normalize()
         loc_loss += loss_l.item()
         conf_loss += loss_c.item()
         obj_loss += loss_obj.item()

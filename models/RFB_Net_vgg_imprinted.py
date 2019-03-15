@@ -137,15 +137,19 @@ def composite_fc(bn, relu, fc):
 
 
 class _DenseLayer(nn.Module):
-    def __init__(self, num_input_features, growth_rate, drop_rate, bias): # bn_size: bottleneck_size
+    def __init__(self, num_input_features, growth_rate, nonlinearty, drop_rate, bias): # bn_size: bottleneck_size
         super(_DenseLayer, self).__init__()
-        self.add_module('bn', nn.BatchNorm1d(num_input_features)),
-        self.add_module('relu', nn.ReLU(inplace=True)),
-        self.add_module('fc', nn.Linear(num_input_features, growth_rate, bias=bias)),
+        self.add_module('bn', nn.BatchNorm1d(num_input_features))
+        self.nonlinearty = nonlinearty
+        if nonlinearty == 'relu':
+            self.add_module('relu', nn.ReLU(inplace=True))
+        elif nonlinearty == 'norm':
+            self.add_module('norm', l2_norm(1))
+        self.add_module('fc', nn.Linear(num_input_features, growth_rate, bias=bias))
         self.drop_rate = drop_rate
 
     def forward(self, *prev_features):
-        fc_function = composite_fc(self.bn, self.relu, self.fc)
+        fc_function = composite_fc(self.bn, self.relu if self.nonlinearty == 'relu' else self.norm, self.fc)
         new_features = fc_function(*prev_features)
         if self.drop_rate > 0:
             new_features = F.dropout(new_features, p=self.drop_rate, training=self.training)
@@ -191,10 +195,10 @@ class RFBNet(nn.Module):
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
         self.obj = nn.ModuleList(head[2])
-        # self.scale = nn.Parameter(torch.FloatTensor([10]))
-        self.add_module('denselayer1', _DenseLayer(60, 20, 0, False))
-        self.add_module('denselayer2', _DenseLayer(80, 20, 0, False))
-        self.add_module('denselayer3', _DenseLayer(100, 20, 0, True))
+        self.scale = nn.Parameter(torch.FloatTensor([10]))
+        self.add_module('denselayer1', _DenseLayer(60, 20, 'relu', 0, False))
+        self.add_module('denselayer2', _DenseLayer(80, 20, 'relu', 0, False))
+        self.add_module('denselayer3', _DenseLayer(100, 20, 'norm', 0, False))
 
     def forward(self, x, phase=None):
         """Applies network layers and ops on input image(s) x.
@@ -261,7 +265,7 @@ class RFBNet(nn.Module):
             for i in range(3):
                 new_features = (self.denselayer1, self.denselayer2, self.denselayer3)[i](*features)
                 features.append(new_features)
-            conf = new_features  # [num*num_priors, 20]
+            conf = new_features * self.scale  # [num*num_priors, 20]
 
         # 把所有的feature map的输出拼合起来
         if n_way:
@@ -287,8 +291,8 @@ class RFBNet(nn.Module):
             print('Sorry only .pth and .pkl files supported.')
 
     def normalize(self):
-        self.denselayer1.fc.weight.data = self.denselayer1.fc.weight / torch.norm(self.denselayer1.fc.weight, dim=1, keepdim=True)
-        self.denselayer2.fc.weight.data = self.denselayer2.fc.weight / torch.norm(self.denselayer2.fc.weight, dim=1, keepdim=True)
+        # self.denselayer1.fc.weight.data = self.denselayer1.fc.weight / torch.norm(self.denselayer1.fc.weight, dim=1, keepdim=True)
+        # self.denselayer2.fc.weight.data = self.denselayer2.fc.weight / torch.norm(self.denselayer2.fc.weight, dim=1, keepdim=True)
         self.denselayer3.fc.weight.data = self.denselayer3.fc.weight / torch.norm(self.denselayer3.fc.weight, dim=1, keepdim=True)
 
 # This function is derived from torchvision VGG make_layers()
