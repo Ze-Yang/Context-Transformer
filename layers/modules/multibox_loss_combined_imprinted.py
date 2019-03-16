@@ -102,18 +102,18 @@ class MultiBoxLoss_combined(nn.Module):
             torch.exp(batch_conf).sum(dim=1, keepdim=True))  # [n_way*n_query*num_priors, 1]
         logit_k = batch_obj[:, 1].unsqueeze(1).expand_as(batch_conf) + batch_conf  # [n_way*n_query*num_priors, n_way]
         logit = torch.cat((logit_0, logit_k), 1)  # [n_way*n_query*num_priors, n_way+1]
-        # with torch.no_grad():
-        loss_c = F.cross_entropy(logit, conf_t.long().view(-1), reduction='none') # [num*num_priors]
+        with torch.no_grad():
+            loss_c = F.cross_entropy(logit, conf_t.long().view(-1), reduction='none') # [num*num_priors]
 
-        # with torch.no_grad():
-        # Hard Negative Mining
-        loss_c[pos.view(-1)] = 0  # filter out pos boxes for now
-        loss_c = loss_c.view(num, -1)
-        _, loss_idx = loss_c.sort(1, descending=True)
-        _, idx_rank = loss_idx.sort(1)
-        num_pos = pos.long().sum(1, keepdim=True)
-        num_neg = torch.clamp(self.negpos_ratio * num_pos, max=num_priors - 1)
-        neg = idx_rank < num_neg.expand_as(idx_rank)
+        with torch.no_grad():
+            # Hard Negative Mining
+            loss_c[pos.view(-1)] = 0  # filter out pos boxes for now
+            loss_c = loss_c.view(num, -1)
+            _, loss_idx = loss_c.sort(1, descending=True)
+            _, idx_rank = loss_idx.sort(1)
+            num_pos = pos.long().sum(1, keepdim=True)
+            num_neg = torch.clamp(self.negpos_ratio * num_pos, max=num_priors - 1)
+            neg = idx_rank < num_neg.expand_as(idx_rank)
 
         # Confidence Loss Including Positive and Negative Examples
         logit = logit.view(num, -1, self.num_classes+1)
@@ -128,18 +128,18 @@ class MultiBoxLoss_combined(nn.Module):
 
         # Compute object loss across batch for hard negative mining
         obj_p = obj_data.view(-1, 2)
-        # with torch.no_grad():
-        loss_obj = F.cross_entropy(obj_p, obj_t.long().view(-1), reduction='none') # [batch*num_priors]
+        with torch.no_grad():
+            loss_obj = F.cross_entropy(obj_p, obj_t.long().view(-1), reduction='none') # [batch*num_priors]
 
-        # with torch.no_grad():
-        # Hard Negative Mining
-        loss_obj[pos.view(-1)] = 0 # filter out pos boxes for now
-        loss_obj = loss_obj.view(num, -1)
-        _, loss_idx = loss_obj.sort(1, descending=True)
-        _, idx_rank = loss_idx.sort(1)
-        num_pos = pos.long().sum(1, keepdim=True) # [batch, 1] 每个图有多少个正类priors
-        num_neg = torch.clamp(self.negpos_ratio*num_pos, max=num_priors-1) #
-        neg = idx_rank < num_neg.expand_as(idx_rank) # [batch, num_priors] 每张图里取loss_obj最大的num_neg个框用来计算loss_obj
+        with torch.no_grad():
+            # Hard Negative Mining
+            loss_obj[pos.view(-1)] = 0 # filter out pos boxes for now
+            loss_obj = loss_obj.view(num, -1)
+            _, loss_idx = loss_obj.sort(1, descending=True)
+            _, idx_rank = loss_idx.sort(1)
+            num_pos = pos.long().sum(1, keepdim=True) # [batch, 1] 每个图有多少个正类priors
+            num_neg = torch.clamp(self.negpos_ratio*num_pos, max=num_priors-1) #
+            neg = idx_rank < num_neg.expand_as(idx_rank) # [batch, num_priors] 每张图里取loss_obj最大的num_neg个框用来计算loss_obj
 
         # Object Loss Including Positive and Negative Examples
         pos_idx = pos.unsqueeze(2).expand_as(obj_data)

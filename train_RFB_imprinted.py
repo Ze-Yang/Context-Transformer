@@ -36,7 +36,7 @@ parser.add_argument('-b', '--batch_size', default=64,
                     type=int, help='Batch size for training')
 parser.add_argument('--n_shot_task', type=int, default=5,
                     help="number of support examples per class on target domain")
-parser.add_argument('--support_episodes', type=int, default=50,
+parser.add_argument('--support_episodes', type=int, default=5,
                     help="number of center calculation per support image (default: 100)")
 parser.add_argument('--train_episodes', type=int, default=100,
                     help="number of train episodes per epoch (default: 100)")
@@ -149,9 +149,7 @@ optimizer = optim.SGD([
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
-                            {'params': net.denselayer1.parameters()},
-                            {'params': net.denselayer2.parameters()},
-                            {'params': net.denselayer3.parameters()},
+                            {'params': net.imprinted_matrix},
                             {'params': net.scale},
                         ], lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 # optimizer = optim.SGD(net.parameters(), lr=args.lr,
@@ -177,16 +175,6 @@ with torch.no_grad():
         priors = priors.cuda()
 num_priors = priors.size(0)
 
-def composite(bn, norm, fc=None):
-    def function(*inputs):
-        concated_features = torch.cat(inputs, 1)
-        if fc is not None:
-            output = fc(norm(bn(concated_features)))
-        else:
-            output = norm(bn(concated_features))
-        return output
-
-    return function
 
 def train(net):
     net.train()
@@ -204,91 +192,53 @@ def train(net):
         print('Only VOC is supported now!')
         return
 
-    bn1 = net.denselayer1.bn
-    bn2 = net.denselayer2.bn
-    bn3 = net.denselayer3.bn
-    norm = net.denselayer3.norm
-    fc1 = net.denselayer1.fc
-    fc2 = net.denselayer2.fc
-    for item in (bn1, bn2, bn3):
-        for key in item.state_dict():
-            if 'weight' in key:
-                item.state_dict()[key][...] = 1
+    print('Initializing the imprinted matrix...')
+    sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
+                                   n_episodes=args.support_episodes, phase='train')
+    batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
+                                          collate_fn=detection_collate))
 
-    for i in range(3):
-        print('Initializing the ' + ('first', 'second', 'third')[i] + ' layer...')
-        sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
-                                       n_episodes=args.support_episodes, phase='train')
-        batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
-                                              collate_fn=detection_collate))
+    if args.cuda:
+        way_list = [torch.empty(0).cuda() for _ in range(n_way)]
+    else:
+        way_list = [torch.empty(0) for _ in range(n_way)]
+
+    for _ in range(args.support_episodes):
+        # load support data
+        # for i in range(10):
+        images, targets = next(batch_iterator)
+        # vis_picture(images, s_t)
 
         if args.cuda:
-            way_list = [torch.empty(0).cuda() for _ in range(n_way)]
+            images = images.cuda()
+            targets = [anno.cuda() for anno in targets]
         else:
-            way_list = [torch.empty(0) for _ in range(n_way)]
+            targets = [anno for anno in targets]
 
-        for _ in range(args.support_episodes):
-            # load support data
-            # for i in range(10):
-            images, targets = next(batch_iterator)
-            # vis_picture(images, s_t)
+        out = net(images, 'init')
 
-            if args.cuda:
-                images = images.cuda()
-                targets = [anno.cuda() for anno in targets]
-            else:
-                targets = [anno for anno in targets]
+        _, conf_data, _ = out
 
-            out = net(images, 'init')
-
-            _, conf_data, _ = out
-
-            if args.cuda:
-                loc_t = torch.Tensor(num, num_priors, 4).cuda()
-                conf_t = torch.CharTensor(num, num_priors).cuda()
-                obj_t = torch.ByteTensor(num, num_priors).cuda()
-            else:
-                loc_t = torch.Tensor(num, num_priors, 4)
-                conf_t = torch.CharTensor(num, num_priors)
-                obj_t = torch.ByteTensor(num, num_priors)
-
-            # match priors with gt
-            for idx in range(num):  # batch_size
-                truths = targets[idx][:, :-1].data  # [obj_num, 4]
-                labels = targets[idx][:, -1].data  # [obj_num]
-                defaults = priors.data  # [num_priors,4]
-                match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, loc_t, conf_t, obj_t, idx)
-
-            cls_idx = conf_t[obj_t.byte()]
-            features = [conf_data[obj_t.byte()].view(-1, feature_dim)]
-            if i == 0:
-                layer1 = composite(bn1, norm)
-                new_features = layer1(*features)
-                way_list = [torch.cat((way_list[i], new_features[cls_idx==i+1].view(-1, 60)), 0) for i in range(n_way)]
-            elif i == 1:
-                layer1 = composite(bn1, norm, fc1)
-                layer2 = composite(bn2, norm)
-                new_features = layer1(*features)
-                features.append(new_features)
-                new_features = layer2(*features)
-                way_list = [torch.cat((way_list[i], new_features[cls_idx==i+1].view(-1, 80)), 0) for i in range(n_way)]
-            else:
-                layer1 = composite(bn1, norm, fc1)
-                layer2 = composite(bn2, norm, fc2)
-                layer3 = composite(bn3, norm)
-                new_features = layer1(*features)
-                features.append(new_features)
-                new_features = layer2(*features)
-                features.append(new_features)
-                new_features = layer3(*features)
-                way_list = [torch.cat((way_list[i], new_features[cls_idx == i + 1].view(-1, 100)), 0) for i in range(n_way)]
-        way_list = [item.mean(0) for item in way_list]
-        if i == 0:
-            net.denselayer1.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 60]
-        elif i == 1:
-            net.denselayer2.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 80]
+        if args.cuda:
+            loc_t = torch.Tensor(num, num_priors, 4).cuda()
+            conf_t = torch.CharTensor(num, num_priors).cuda()
+            obj_t = torch.ByteTensor(num, num_priors).cuda()
         else:
-            net.denselayer3.fc.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [20, 100]
+            loc_t = torch.Tensor(num, num_priors, 4)
+            conf_t = torch.CharTensor(num, num_priors)
+            obj_t = torch.ByteTensor(num, num_priors)
+
+        # match priors with gt
+        for idx in range(num):  # batch_size
+            truths = targets[idx][:, :-1].data  # [obj_num, 4]
+            labels = targets[idx][:, -1].data  # [obj_num]
+            defaults = priors.data  # [num_priors,4]
+            match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, loc_t, conf_t, obj_t, idx)
+
+        conf_data_list = [conf_data[conf_t == i].view(-1, feature_dim) for i in range(1, num_classes)]
+        way_list = [torch.cat((way_list[i], conf_data_list[i]), 0) for i in range(n_way)]
+    way_list = [(item / torch.norm(item, dim=1, keepdim=True)).mean(0) for item in way_list]
+    net.imprinted_matrix.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [n_way, num_classes]
 
     print('Fine tuning on ' + str(args.n_shot_task) + 'shot task')
     for param in net.parameters():

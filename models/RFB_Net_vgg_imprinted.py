@@ -116,46 +116,6 @@ class BasicRFB_a(nn.Module):
 
         return out
 
-
-class l2_norm(nn.Module):
-    def __init__(self, dim):
-        super(l2_norm, self).__init__()
-        self.dim = dim
-
-    def forward(self, input):
-        output = input / torch.norm(input, dim=self.dim, keepdim=True)
-        return output
-
-
-def composite_fc(bn, relu, fc):
-    def fc_function(*inputs):
-        concated_features = torch.cat(inputs, 1)
-        output = fc(relu(bn(concated_features)))
-        return output
-
-    return fc_function
-
-
-class _DenseLayer(nn.Module):
-    def __init__(self, num_input_features, growth_rate, nonlinearty, drop_rate, bias): # bn_size: bottleneck_size
-        super(_DenseLayer, self).__init__()
-        self.add_module('bn', nn.BatchNorm1d(num_input_features))
-        self.nonlinearty = nonlinearty
-        if nonlinearty == 'relu':
-            self.add_module('relu', nn.ReLU(inplace=True))
-        elif nonlinearty == 'norm':
-            self.add_module('norm', l2_norm(1))
-        self.add_module('fc', nn.Linear(num_input_features, growth_rate, bias=bias))
-        self.drop_rate = drop_rate
-
-    def forward(self, *prev_features):
-        fc_function = composite_fc(self.bn, self.relu if self.nonlinearty == 'relu' else self.norm, self.fc)
-        new_features = fc_function(*prev_features)
-        if self.drop_rate > 0:
-            new_features = F.dropout(new_features, p=self.drop_rate, training=self.training)
-        return new_features
-
-
 class RFBNet(nn.Module):
     """RFB Net for object detection
     The network is based on the SSD architecture.
@@ -195,10 +155,8 @@ class RFBNet(nn.Module):
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
         self.obj = nn.ModuleList(head[2])
+        self.imprinted_matrix = nn.Parameter(torch.FloatTensor(20, 60))
         self.scale = nn.Parameter(torch.FloatTensor([10]))
-        self.add_module('denselayer1', _DenseLayer(60, 20, 'relu', 0, False))
-        self.add_module('denselayer2', _DenseLayer(80, 20, 'relu', 0, False))
-        self.add_module('denselayer3', _DenseLayer(100, 20, 'norm', 0, False))
 
     def forward(self, x, phase=None):
         """Applies network layers and ops on input image(s) x.
@@ -261,11 +219,9 @@ class RFBNet(nn.Module):
         obj = torch.cat([o.view(o.size(0), -1) for o in obj], 1)
 
         if phase is None:
-            features = [conf.view(-1, self.num_classes)]
-            for i in range(3):
-                new_features = (self.denselayer1, self.denselayer2, self.denselayer3)[i](*features)
-                features.append(new_features)
-            conf = new_features * self.scale  # [num*num_priors, 20]
+            conf = conf.view(-1, self.num_classes)
+            conf = conf / torch.norm(conf, dim=1, keepdim=True)  # [num, num_priors, feature_dim]
+            conf = conf.mm(self.imprinted_matrix.t()) * self.scale  # [num*num_priors, 20]
 
         # 把所有的feature map的输出拼合起来
         if n_way:
@@ -293,7 +249,8 @@ class RFBNet(nn.Module):
     def normalize(self):
         # self.denselayer1.fc.weight.data = self.denselayer1.fc.weight / torch.norm(self.denselayer1.fc.weight, dim=1, keepdim=True)
         # self.denselayer2.fc.weight.data = self.denselayer2.fc.weight / torch.norm(self.denselayer2.fc.weight, dim=1, keepdim=True)
-        self.denselayer3.fc.weight.data = self.denselayer3.fc.weight / torch.norm(self.denselayer3.fc.weight, dim=1, keepdim=True)
+        # self.denselayer3.fc.weight.data = self.denselayer3.fc.weight / torch.norm(self.denselayer3.fc.weight, dim=1, keepdim=True)
+        self.imprinted_matrix.data = self.imprinted_matrix / torch.norm(self.imprinted_matrix, dim=1, keepdim=True)
 
 # This function is derived from torchvision VGG make_layers()
 # https://github.com/pytorch/vision/blob/master/torchvision/models/vgg.py
