@@ -8,11 +8,13 @@ import torch.backends.cudnn as cudnn
 import torch.nn.init as init
 import argparse
 import torch.utils.data as data
+import numpy as np
 from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, BaseTransform, preproc, EpisodicBatchSampler
 from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
 from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
 from layers.functions import PriorBox
 from utils.box_utils import match
+# from utils.mixup import mixup_data
 import time
 from data.voc0712_meta import VOC_CLASSES
 from data.coco_voc_form import COCO_CLASSES
@@ -36,7 +38,7 @@ parser.add_argument('-b', '--batch_size', default=64,
                     type=int, help='Batch size for training')
 parser.add_argument('--n_shot_task', type=int, default=5,
                     help="number of support examples per class on target domain")
-parser.add_argument('--support_episodes', type=int, default=5,
+parser.add_argument('--support_episodes', type=int, default=50,
                     help="number of center calculation per support image (default: 100)")
 parser.add_argument('--train_episodes', type=int, default=100,
                     help="number of train episodes per epoch (default: 100)")
@@ -207,7 +209,7 @@ def train(net):
         # load support data
         # for i in range(10):
         images, targets = next(batch_iterator)
-        # vis_picture(images, s_t)
+        # vis_picture(images, targets)
 
         if args.cuda:
             images = images.cuda()
@@ -221,26 +223,27 @@ def train(net):
 
         if args.cuda:
             loc_t = torch.Tensor(num, num_priors, 4).cuda()
-            conf_t = torch.CharTensor(num, num_priors).cuda()
+            conf_t = torch.Tensor(num, num_priors, 2).cuda()
             obj_t = torch.ByteTensor(num, num_priors).cuda()
         else:
             loc_t = torch.Tensor(num, num_priors, 4)
-            conf_t = torch.CharTensor(num, num_priors)
+            conf_t = torch.Tensor(num, num_priors, 2)
             obj_t = torch.ByteTensor(num, num_priors)
 
         # match priors with gt
         for idx in range(num):  # batch_size
-            truths = targets[idx][:, :-1].data  # [obj_num, 4]
-            labels = targets[idx][:, -1].data  # [obj_num]
+            truths = targets[idx][:, :-2].data  # [obj_num, 4]
+            labels = targets[idx][:, -2:].data  # [obj_num]
             defaults = priors.data  # [num_priors,4]
             match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, loc_t, conf_t, obj_t, idx)
 
-        conf_data_list = [conf_data[conf_t == i].view(-1, feature_dim) for i in range(1, num_classes)]
+        conf_data_list = [conf_data[conf_t[:, :, 0] == i] for i in range(1, num_classes)]
         way_list = [torch.cat((way_list[i], conf_data_list[i]), 0) for i in range(n_way)]
     way_list = [(item / torch.norm(item, dim=1, keepdim=True)).mean(0) for item in way_list]
     net.imprinted_matrix.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [n_way, num_classes]
 
     print('Fine tuning on ' + str(args.n_shot_task) + 'shot task')
+    dataset.set_mixup(np.random.beta, 1.5, 1.5)
     for param in net.parameters():
         param.requires_grad = True
 
@@ -299,6 +302,8 @@ def train(net):
             targets = [anno.cuda() for anno in targets]
         else:
             targets = [anno for anno in targets]
+
+        # images, targets, lam = mixup_data(images, targets, args.alpha, args.cuda)
 
         # forward
         out = net(images)

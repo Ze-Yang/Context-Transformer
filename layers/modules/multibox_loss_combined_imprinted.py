@@ -66,28 +66,30 @@ class MultiBoxLoss_combined(nn.Module):
         # match priors (default boxes) and ground truth boxes
         if GPU:
             loc_t = torch.Tensor(num, num_priors, 4).cuda()
-            conf_t = torch.CharTensor(num, num_priors).cuda()
+            conf_t = torch.Tensor(num, num_priors, 2).cuda()
             obj_t = torch.ByteTensor(num, num_priors).cuda()
         else:
             loc_t = torch.Tensor(num, num_priors, 4)
-            conf_t = torch.CharTensor(num, num_priors)
+            conf_t = torch.Tensor(num, num_priors, 2)
             obj_t = torch.ByteTensor(num, num_priors)
 
         # match priors with gt
         for idx in range(num): # batch_size
-            truths = targets[idx][:, :-1].data  # [obj_num, 4]
-            labels = targets[idx][:, -1].data   # [obj_num]
+            truths = targets[idx][:, :-2].data  # [obj_num, 4]
+            labels = targets[idx][:, -2:].data   # [obj_num]
             defaults = priors.data              # [num_priors,4]
             match(self.threshold, truths, defaults, self.variance, labels, loc_t, conf_t, obj_t, idx)
 
         pos = obj_t.byte() # [num, num_priors]
+        num_pos = (conf_t[:, :, 1] * pos.float()).sum(1, keepdim=True).long()
 
         # Localization Loss (Smooth L1)
         # Shape: [batch,num_priors,4]
-        pos_idx = pos.unsqueeze(pos.dim()).expand_as(loc_data)
-        loc_p = loc_data[pos_idx].view(-1, 4) #整个batch的正样本priors
-        loc_t = loc_t[pos_idx].view(-1, 4)    #对应的target
-        loss_l = F.smooth_l1_loss(loc_p, loc_t, reduction='sum') # size_average=False等价于reduction='sum'
+        loc_p = loc_data[pos] #整个batch的正样本priors
+        loc_t = loc_t[pos]    #对应的target
+        loss_l = F.smooth_l1_loss(loc_p, loc_t, reduction='none') # size_average=False等价于reduction='sum'
+        weight_pos = conf_t[pos][:, 1]
+        loss_l = torch.sum(torch.sum(loss_l, dim=1) * weight_pos)
 
 
 
@@ -103,7 +105,7 @@ class MultiBoxLoss_combined(nn.Module):
         logit_k = batch_obj[:, 1].unsqueeze(1).expand_as(batch_conf) + batch_conf  # [n_way*n_query*num_priors, n_way]
         logit = torch.cat((logit_0, logit_k), 1)  # [n_way*n_query*num_priors, n_way+1]
         with torch.no_grad():
-            loss_c = F.cross_entropy(logit, conf_t.long().view(-1), reduction='none') # [num*num_priors]
+            loss_c = F.cross_entropy(logit, conf_t[:, :, 0].long().view(-1), reduction='none') # [num*num_priors]
 
         with torch.no_grad():
             # Hard Negative Mining
@@ -111,19 +113,43 @@ class MultiBoxLoss_combined(nn.Module):
             loss_c = loss_c.view(num, -1)
             _, loss_idx = loss_c.sort(1, descending=True)
             _, idx_rank = loss_idx.sort(1)
-            num_pos = pos.long().sum(1, keepdim=True)
             num_neg = torch.clamp(self.negpos_ratio * num_pos, max=num_priors - 1)
             neg = idx_rank < num_neg.expand_as(idx_rank)
 
         # Confidence Loss Including Positive and Negative Examples
         logit = logit.view(num, -1, self.num_classes+1)
-        pos_idx = pos.unsqueeze(2).expand_as(logit)
-        neg_idx = neg.unsqueeze(2).expand_as(logit)
-        conf_p = logit[(pos_idx + neg_idx).gt(0)].view(-1, self.num_classes+1)
-        conf_t = conf_t[(pos + neg).gt(0)]
-        loss_c = F.cross_entropy(conf_p, conf_t.long(), reduction='sum')
+        mask = (pos + neg).gt(0)
+        conf_p = logit[mask]
+        weight_c = conf_t[mask][:, 1]
+        loss_c = torch.sum(F.cross_entropy(conf_p, conf_t[mask][:, 0].long(), reduction='none') * weight_c)
 
-
+        # import numpy as np
+        # from utils.box_utils import point_form
+        # import matplotlib.pyplot as plt
+        # import cv2
+        # np_img = images.cpu().numpy()
+        # targets = [(anno.cpu().numpy() * 300).astype(np.uint16) for anno in targets]
+        # num = images.shape[0]
+        # imgs = np.transpose(np_img, (0, 2, 3, 1))
+        # imgs = (imgs + np.array([104, 117, 123])) / 255  # RGB
+        # imgs = imgs[:, :, :, ::-1]  # BGR
+        # boxes = np.clip(point_form(priors).cpu().numpy(), 0, 1)
+        # boxes = (boxes * 300).astype(np.uint16)
+        #
+        # for i in range(num):
+        #     img = imgs[i, :, :, :].copy()
+        #     gt = targets[i][:, :4]
+        #     for j in range(gt.shape[0]):
+        #         cv2.rectangle(img, (gt[j, 0], gt[j, 1]), (gt[j, 2], gt[j, 3]), (0, 0, 1))
+        #     # for k in [0, 8664, 10830, 11430, 11580, 11616]:
+        #     for k in range(priors.size(0)):
+        #         if obj_t[i, k] > 0:
+        #             cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (0, 1, 0))
+        #     for k in range(priors.size(0)):
+        #         if neg[i, k] > 0:
+        #             cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (1, 0, 0))
+        #     plt.imshow(img)
+        #     plt.show()
 
 
         # Compute object loss across batch for hard negative mining
@@ -137,19 +163,17 @@ class MultiBoxLoss_combined(nn.Module):
             loss_obj = loss_obj.view(num, -1)
             _, loss_idx = loss_obj.sort(1, descending=True)
             _, idx_rank = loss_idx.sort(1)
-            num_pos = pos.long().sum(1, keepdim=True) # [batch, 1] 每个图有多少个正类priors
-            num_neg = torch.clamp(self.negpos_ratio*num_pos, max=num_priors-1) #
             neg = idx_rank < num_neg.expand_as(idx_rank) # [batch, num_priors] 每张图里取loss_obj最大的num_neg个框用来计算loss_obj
 
         # Object Loss Including Positive and Negative Examples
-        pos_idx = pos.unsqueeze(2).expand_as(obj_data)
-        neg_idx = neg.unsqueeze(2).expand_as(obj_data)
-        obj_p = obj_data[(pos_idx+neg_idx).gt(0)].view(-1, 2)
-        obj_t = obj_t[(pos+neg).gt(0)]
-        loss_obj = F.cross_entropy(obj_p, obj_t.long(), reduction='sum')
+        mask = (pos + neg).gt(0)
+        obj_p = obj_data[mask]
+        obj_t = obj_t[mask]
+        weight_o = conf_t[mask][:, 1]
+        loss_obj = torch.sum(F.cross_entropy(obj_p, obj_t.long(), reduction='none') * weight_o)
 
         # Sum of losses: L(x,c,l,g) = (Lconf(x, c) + αLloc(x,l,g)) / N
-        N = num_pos.data.sum().float()
+        N = conf_t[pos][:, 1].sum()
         loss_l /= N
         loss_c /= N
         loss_obj /= N

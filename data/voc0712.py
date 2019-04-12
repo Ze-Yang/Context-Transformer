@@ -116,7 +116,7 @@ class AnnotationTransform(object):
         Returns:
             a list containing lists of bounding boxes  [bbox coords, class name]
         """
-        res = np.empty((0,5)) 
+        res = np.empty((0,5))
         for obj in target.iter('object'):
             difficult = int(obj.find('difficult').text) == 1
             if not self.keep_difficult and difficult:
@@ -158,7 +158,7 @@ class VOCDetection(data.Dataset):
     """
 
     def __init__(self, root, image_sets, preproc=None, target_transform=None,
-                 dataset_name='VOC0712', n_shot_task=1):
+                 dataset_name='VOC0712', n_shot_task=1, mixup=None):
         self.root = root
         self.image_set = image_sets
         self.preproc = preproc
@@ -166,6 +166,8 @@ class VOCDetection(data.Dataset):
         self.name = dataset_name
         self._annopath = os.path.join('%s', 'Annotations', '%s.xml')
         self._imgpath = os.path.join('%s', 'JPEGImages', '%s.jpg')
+        self.mixup = mixup
+        self.mixup_args = (1.5, 1.5)
         self.ids = list()
         for (year, name) in image_sets:
             self._year = year
@@ -174,20 +176,65 @@ class VOCDetection(data.Dataset):
                 self.ids.append((rootpath, line.strip()))
 
     def __getitem__(self, index):
+        # first image
         img_id = self.ids[index]
-        target = ET.parse(self._annopath % img_id).getroot()
-        img = cv2.imread(self._imgpath % img_id, cv2.IMREAD_COLOR)
+        target1 = ET.parse(self._annopath % img_id).getroot()
+        img1 = cv2.imread(self._imgpath % img_id, cv2.IMREAD_COLOR)
 
         if self.target_transform is not None:
-            target = self.target_transform(target)
+            target1 = self.target_transform(target1)
 
         if self.preproc is not None:
-            img, target = self.preproc(img, target)
+            img1, target1 = self.preproc(img1, target1)
 
-        return img, target
+        lambd = 1
+        # draw a random lambda ratio from distribution
+        if self.mixup is not None:
+            lambd = max(0, min(1, self.mixup(*self.mixup_args)))
+
+        if lambd >= 1:
+            weights1 = np.ones((target1.shape[0], 1))
+            target1 = np.hstack((target1, weights1))
+            return img1, target1
+
+        lambd = torch.tensor(lambd)
+        # second image
+        index2 = np.random.choice(np.delete(np.arange(len(self)), index))
+        img_id = self.ids[index2]
+        target2 = ET.parse(self._annopath % img_id).getroot()
+        img2 = cv2.imread(self._imgpath % img_id, cv2.IMREAD_COLOR)
+
+        if self.target_transform is not None:
+            target2 = self.target_transform(target2)
+
+        if self.preproc is not None:
+            img2, target2 = self.preproc(img2, target2)
+
+        # mixup two images
+        mix_img = img1 * lambd + img2 * (1. - lambd)
+        y1 = np.hstack((target1, np.full((target1.shape[0], 1), lambd)))
+        y2 = np.hstack((target2, np.full((target2.shape[0], 1), 1. - lambd)))
+        mix_target = np.vstack((y1, y2))
+
+        return mix_img, mix_target
 
     def __len__(self):
         return len(self.ids)
+
+    def set_mixup(self, mixup=None, *args):
+        """Set mixup random sampler, use None to disable.
+
+                Parameters
+                ----------
+                mixup : callable random generator, e.g. np.random.uniform
+                    A random mixup ratio sampler, preferably a random generator from numpy.random
+                    A random float will be sampled each time with mixup(*args)
+                *args : list
+                    Additional arguments for mixup random sampler.
+
+                """
+        self.mixup = mixup
+        self.mixup_args = args
 
     def pull_image(self, index):
         '''Returns the original image object at index in PIL form
