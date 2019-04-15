@@ -191,6 +191,7 @@ class VOCDetection(data.Dataset):
         # draw a random lambda ratio from distribution
         if self.mixup is not None:
             lambd = max(0, min(1, self.mixup(*self.mixup_args)))
+            # lambd = 0.5
 
         if lambd >= 1:
             weights1 = np.ones((target1.shape[0], 1))
@@ -210,8 +211,13 @@ class VOCDetection(data.Dataset):
         if self.preproc is not None:
             img2, target2 = self.preproc(img2, target2)
 
+
+
         # mixup two images
         mix_img = img1 * lambd + img2 * (1. - lambd)
+        # weight1 = (grey_avg1 * lambd) / (grey_avg1 * lambd + grey_avg2 * (1 - lambd))
+        # weight2 = (grey_avg2 * (1 - lambd)) / (grey_avg1 * lambd + grey_avg2 * (1 - lambd))
+        # mix_img = img1 * weight1 + img2 * weight2
         y1 = np.hstack((target1, np.full((target1.shape[0], 1), lambd)))
         y2 = np.hstack((target2, np.full((target2.shape[0], 1), 1. - lambd)))
         mix_target = np.vstack((y1, y2))

@@ -142,12 +142,12 @@ class MultiBoxLoss_combined(nn.Module):
         #     for j in range(gt.shape[0]):
         #         cv2.rectangle(img, (gt[j, 0], gt[j, 1]), (gt[j, 2], gt[j, 3]), (0, 0, 1))
         #     # for k in [0, 8664, 10830, 11430, 11580, 11616]:
-        #     for k in range(priors.size(0)):
-        #         if obj_t[i, k] > 0:
-        #             cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (0, 1, 0))
-        #     for k in range(priors.size(0)):
-        #         if neg[i, k] > 0:
-        #             cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (1, 0, 0))
+        #     # for k in range(priors.size(0)):
+        #     #     if obj_t[i, k] > 0:
+        #     #         cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (0, 1, 0))
+        #     # for k in range(priors.size(0)):
+        #     #     if neg[i, k] > 0:
+        #     #         cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (1, 0, 0))
         #     plt.imshow(img)
         #     plt.show()
 
@@ -173,7 +173,7 @@ class MultiBoxLoss_combined(nn.Module):
         loss_obj = torch.sum(F.cross_entropy(obj_p, obj_t.long(), reduction='none') * weight_o)
 
         # Sum of losses: L(x,c,l,g) = (Lconf(x, c) + αLloc(x,l,g)) / N
-        N = conf_t[pos][:, 1].sum()
+        N = weight_pos.sum()
         loss_l /= N
         loss_c /= N
         loss_obj /= N

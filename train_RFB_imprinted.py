@@ -56,6 +56,10 @@ parser.add_argument('--resume_epoch', default=0,
                     type=int, help='resume iter for retraining')
 parser.add_argument('-max', '--max_epoch', default=40,
                     type=int, help='max epoch for retraining')
+parser.add_argument('--mixup', action='store_true',
+                        help='whether to enable mixup.')
+parser.add_argument('--no_mixup_epochs', type=int, default=15,
+                        help='Disable mixup training if enabled in the last N epochs.')
 parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
 parser.add_argument('--gamma', default=0.1,
@@ -274,6 +278,8 @@ def train(net):
 
     for iteration in range(start_iter, max_iter):
         if iteration % epoch_size == 0:
+            if epoch >= (args.max_epoch - args.no_mixup_epochs):
+                dataset.set_mixup(None)
             # create batch iterator
             batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
                                                   collate_fn=detection_collate))
