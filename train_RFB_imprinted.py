@@ -147,6 +147,14 @@ else:
             name = k
         new_state_dict[name] = v
     net.load_state_dict(new_state_dict, strict=False)
+    net.scale.requires_grad = False
+    init.kaiming_normal_(net.theta.weight, mode='fan_out')
+    init.kaiming_normal_(net.phi.weight, mode='fan_out')
+    init.kaiming_normal_(net.g.weight, mode='fan_out')
+    net.theta.bias.data.fill_(0)
+    net.phi.bias.data.fill_(0)
+    net.g.bias.data.fill_(0)
+    net.Wz.data.fill_(0)
 
 optimizer = optim.SGD([
                             {'params': net.base.parameters(), 'lr': 0.1*args.lr},
@@ -155,8 +163,12 @@ optimizer = optim.SGD([
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
+                            {'params': net.theta.parameters()},
+                            {'params': net.phi.parameters()},
+                            {'params': net.g.parameters()},
                             {'params': net.imprinted_matrix},
-                            {'params': net.scale},
+                            {'params': net.Wz},
+                            # {'params': net.scale},
                         ], lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 # optimizer = optim.SGD(net.parameters(), lr=args.lr,
 #                       momentum=args.momentum, weight_decay=args.weight_decay)
@@ -183,78 +195,73 @@ num_priors = priors.size(0)
 
 
 def train(net):
+
     net.train()
-    for param in net.parameters():
-        param.requires_grad = False
-
-    print('Loading Dataset...')
-    if args.dataset == 'VOC':
-        # dataset_init = VOCDetection(VOCroot, train_sets, preproc(img_dim, rgb_means, p),
-        #                        VOC_AnnotationTransform(), n_shot, 0,
-        #                        phase='test_support', n_shot_task=args.n_shot_task)
-        dataset = VOCDetection(VOCroot, train_sets, preproc(
-            img_dim, rgb_means, p), AnnotationTransform(), n_shot_task=args.n_shot_task)
-    else:
-        print('Only VOC is supported now!')
-        return
-
-    print('Initializing the imprinted matrix...')
-    sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
-                                   n_episodes=args.support_episodes, phase='train')
-    batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
-                                          collate_fn=detection_collate))
-
-    if args.cuda:
-        way_list = [torch.empty(0).cuda() for _ in range(n_way)]
-    else:
-        way_list = [torch.empty(0) for _ in range(n_way)]
-
-    for _ in range(args.support_episodes):
-        # load support data
-        # for i in range(10):
-        images, targets = next(batch_iterator)
-        # vis_picture(images, targets)
-
-        if args.cuda:
-            images = images.cuda()
-            targets = [anno.cuda() for anno in targets]
-        else:
-            targets = [anno for anno in targets]
-
-        out = net(images, 'init')
-
-        _, conf_data, _ = out
-
-        if args.cuda:
-            loc_t = torch.Tensor(num, num_priors, 4).cuda()
-            conf_t = torch.Tensor(num, num_priors, 2).cuda()
-            obj_t = torch.ByteTensor(num, num_priors).cuda()
-        else:
-            loc_t = torch.Tensor(num, num_priors, 4)
-            conf_t = torch.Tensor(num, num_priors, 2)
-            obj_t = torch.ByteTensor(num, num_priors)
-
-        # match priors with gt
-        for idx in range(num):  # batch_size
-            truths = targets[idx][:, :-2].data  # [obj_num, 4]
-            labels = targets[idx][:, -2:].data  # [obj_num]
-            defaults = priors.data  # [num_priors,4]
-            match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, loc_t, conf_t, obj_t, idx)
-
-        conf_data_list = [conf_data[conf_t[:, :, 0] == i] for i in range(1, num_classes)]
-        way_list = [torch.cat((way_list[i], conf_data_list[i]), 0) for i in range(n_way)]
-    way_list = [(item / torch.norm(item, dim=1, keepdim=True)).mean(0) for item in way_list]
-    net.imprinted_matrix.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [n_way, num_classes]
-
-    print('Fine tuning on ' + str(args.n_shot_task) + 'shot task')
-    dataset.set_mixup(np.random.beta, 1.5, 1.5)
-    for param in net.parameters():
-        param.requires_grad = True
-
     if args.ngpu > 1:
         net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)), output_device=0)
 
-    net.train()
+    with torch.no_grad():
+        print('Loading Dataset...')
+        if args.dataset == 'VOC':
+            # dataset_init = VOCDetection(VOCroot, train_sets, preproc(img_dim, rgb_means, p),
+            #                        VOC_AnnotationTransform(), n_shot, 0,
+            #                        phase='test_support', n_shot_task=args.n_shot_task)
+            dataset = VOCDetection(VOCroot, train_sets, preproc(
+                img_dim, rgb_means, p), AnnotationTransform(), n_shot_task=args.n_shot_task)
+        else:
+            print('Only VOC is supported now!')
+            return
+
+        print('Initializing the imprinted matrix...')
+        sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
+                                       n_episodes=args.support_episodes, phase='train')
+        batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
+                                              collate_fn=detection_collate))
+
+        if args.cuda:
+            way_list = [torch.empty(0).cuda() for _ in range(n_way)]
+        else:
+            way_list = [torch.empty(0) for _ in range(n_way)]
+
+        for _ in range(args.support_episodes):
+            # load support data
+            # for i in range(10):
+            images, targets = next(batch_iterator)
+            # vis_picture(images, targets)
+
+            if args.cuda:
+                images = images.cuda()
+                targets = [anno.cuda() for anno in targets]
+            else:
+                targets = [anno for anno in targets]
+
+            out = net(images, 'init')
+
+            _, conf_data, _ = out
+
+            if args.cuda:
+                loc_t = torch.Tensor(num, num_priors, 4).cuda()
+                conf_t = torch.Tensor(num, num_priors, 2).cuda()
+                obj_t = torch.ByteTensor(num, num_priors).cuda()
+            else:
+                loc_t = torch.Tensor(num, num_priors, 4)
+                conf_t = torch.Tensor(num, num_priors, 2)
+                obj_t = torch.ByteTensor(num, num_priors)
+
+            # match priors with gt
+            for idx in range(num):  # batch_size
+                truths = targets[idx][:, :-2].data  # [obj_num, 4]
+                labels = targets[idx][:, -2:].data  # [obj_num]
+                defaults = priors.data  # [num_priors,4]
+                match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, loc_t, conf_t, obj_t, idx)
+
+            conf_data_list = [conf_data[conf_t[:, :, 0] == i] for i in range(1, num_classes)]
+            way_list = [torch.cat((way_list[i], conf_data_list[i]), 0) for i in range(n_way)]
+        way_list = [(item / torch.norm(item, dim=1, keepdim=True)).mean(0) for item in way_list]
+        net.module.imprinted_matrix.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [n_way, num_classes]
+
+    print('Fine tuning on ' + str(args.n_shot_task) + 'shot task')
+    dataset.set_mixup(np.random.beta, 1.5, 1.5)
     epoch = 0 + args.resume_epoch
     epoch_size = args.train_episodes
     max_iter = args.max_epoch * epoch_size
@@ -308,8 +315,6 @@ def train(net):
             targets = [anno.cuda() for anno in targets]
         else:
             targets = [anno for anno in targets]
-
-        # images, targets, lam = mixup_data(images, targets, args.alpha, args.cuda)
 
         # forward
         out = net(images)

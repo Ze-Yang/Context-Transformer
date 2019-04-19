@@ -155,8 +155,13 @@ class RFBNet(nn.Module):
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
         self.obj = nn.ModuleList(head[2])
+
+        self.theta = nn.Linear(60, 60)
+        self.phi = nn.Linear(60, 60)
+        self.g = nn.Linear(60, 60)
+        self.Wz = nn.Parameter(torch.FloatTensor(60))
         self.imprinted_matrix = nn.Parameter(torch.FloatTensor(20, 60))
-        self.scale = nn.Parameter(torch.FloatTensor([10]))
+        self.scale = nn.Parameter(torch.FloatTensor([5]))
 
     def forward(self, x, phase=None):
         """Applies network layers and ops on input image(s) x.
@@ -182,6 +187,7 @@ class RFBNet(nn.Module):
         loc = list()
         conf = list()
         obj = list()
+        conf_pool = list()
 
         if x.dim()==5:
             n_way = x.size(0)
@@ -208,17 +214,31 @@ class RFBNet(nn.Module):
             if k < self.indicator or k%2 ==0:
                 sources.append(x)
 
+        kernel_size = [3, 2, 2, 2, 1, 1]
+        stride = [3, 2, 2, 2, 1, 1]
         # apply multibox head to source layers
-        for (x, l, c, o) in zip(sources, self.loc, self.conf, self.obj):
+        for i, (x, l, c, o) in enumerate(zip(sources, self.loc, self.conf, self.obj)):
             loc.append(l(x).permute(0, 2, 3, 1).contiguous())   # [num, map_size, map_size, 6*4]
             conf.append(c(x).permute(0, 2, 3, 1).contiguous())  # [num, map_size, map_size, 6*num_classes]
             obj.append(o(x).permute(0, 2, 3, 1).contiguous())   # [num, map_size, map_size, 6*2]
+            conf_pool.append(nn.functional.max_pool2d(c(x), kernel_size=kernel_size[i], stride=stride[i],
+                                                      ceil_mode=True).permute(0, 2, 3, 1).contiguous())
 
         loc = torch.cat([o.view(o.size(0), -1) for o in loc], 1) # 把所有的feature map的输出拼合起来
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
         obj = torch.cat([o.view(o.size(0), -1) for o in obj], 1)
+        conf_pool = torch.cat([o.view(o.size(0), -1) for o in conf_pool], 1)
 
         if phase is None:
+            conf = conf.view(num, -1, self.num_classes)
+            conf_pool = conf_pool.view(num, -1, self.num_classes)
+            conf_theta = self.theta(conf) + conf
+            conf_phi = self.phi(conf_pool) + conf_pool
+            conf_g = self.g(conf_pool) + conf_pool
+            weight = torch.matmul(conf_theta, conf_phi.transpose(1, 2))
+            weight = nn.functional.softmax(weight, dim=2)
+            delta_conf = torch.matmul(weight, conf_g) * self.Wz
+            conf = conf + delta_conf
             conf = conf.view(-1, self.num_classes)
             conf = conf / torch.norm(conf, dim=1, keepdim=True)  # [num, num_priors, feature_dim]
             conf = conf.mm(self.imprinted_matrix.t()) * self.scale  # [num*num_priors, 20]
