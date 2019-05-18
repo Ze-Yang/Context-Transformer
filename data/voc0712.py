@@ -158,7 +158,7 @@ class VOCDetection(data.Dataset):
     """
 
     def __init__(self, root, image_sets, preproc=None, target_transform=None,
-                 dataset_name='VOC0712', n_shot_task=1, mixup=None):
+                 dataset_name='VOC0712', n_shot_task=1, random_seed=None, mixup=None):
         self.root = root
         self.image_set = image_sets
         self.preproc = preproc
@@ -172,8 +172,14 @@ class VOCDetection(data.Dataset):
         for (year, name) in image_sets:
             self._year = year
             rootpath = os.path.join(self.root, 'VOC' + year)
-            for line in open(os.path.join(rootpath, 'ImageSets', 'Main', name + '_' + str(n_shot_task) + 'shot.txt')):
-                self.ids.append((rootpath, line.strip()))
+            if random_seed is not None:
+                for line in open(os.path.join(rootpath, 'ImageSets', 'Main',
+                                              name + '_' + str(n_shot_task) + 'shot_s' + str(random_seed) + '.txt')):
+                    self.ids.append((rootpath, line.strip()))
+            else:
+                for line in open(os.path.join(rootpath, 'ImageSets', 'Main',
+                                              name + '_' + str(n_shot_task) + 'shot.txt')):
+                    self.ids.append((rootpath, line.strip()))
 
     def __getitem__(self, index):
         # first image

@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
-from utils.box_utils import match, log_sum_exp
+from utils.box_utils import match
 GPU = False
 if torch.cuda.is_available():
     GPU = True
@@ -93,6 +92,24 @@ class MultiBoxLoss_combined(nn.Module):
 
 
 
+        # Compute object loss across batch for hard negative mining
+        with torch.no_grad():
+            loss_obj = F.cross_entropy(obj_data.view(-1, 2), obj_t.long().view(-1), reduction='none')  # [batch*num_priors]
+            # Hard Negative Mining
+            loss_obj[pos.view(-1)] = 0  # filter out pos boxes for now
+            loss_obj = loss_obj.view(num, -1)
+            _, loss_idx = loss_obj.sort(1, descending=True)
+            _, idx_rank = loss_idx.sort(1)
+            num_neg = torch.clamp(self.negpos_ratio * num_pos, max=num_priors - 1)
+            neg = idx_rank < num_neg.expand_as(idx_rank)  # [batch, num_priors] 每张图里取loss_obj最大的num_neg个框用来计算loss_obj
+
+        # Object Loss Including Positive and Negative Examples
+        mask = (pos + neg).gt(0)
+        weight = conf_t[mask][:, 1]
+        loss_obj = torch.sum(F.cross_entropy(obj_data[mask], obj_t[mask].long(), reduction='none') * weight)
+
+
+
         # Confidence Loss(cosine distance to classes center)
         # pos [num, num_priors]
         # conf_data [num, num_priors, feature_dim]
@@ -104,24 +121,10 @@ class MultiBoxLoss_combined(nn.Module):
             torch.exp(batch_conf).sum(dim=1, keepdim=True))  # [n_way*n_query*num_priors, 1]
         logit_k = batch_obj[:, 1].unsqueeze(1).expand_as(batch_conf) + batch_conf  # [n_way*n_query*num_priors, n_way]
         logit = torch.cat((logit_0, logit_k), 1)  # [n_way*n_query*num_priors, n_way+1]
-        with torch.no_grad():
-            loss_c = F.cross_entropy(logit, conf_t[:, :, 0].long().view(-1), reduction='none') # [num*num_priors]
-
-        with torch.no_grad():
-            # Hard Negative Mining
-            loss_c[pos.view(-1)] = 0  # filter out pos boxes for now
-            loss_c = loss_c.view(num, -1)
-            _, loss_idx = loss_c.sort(1, descending=True)
-            _, idx_rank = loss_idx.sort(1)
-            num_neg = torch.clamp(self.negpos_ratio * num_pos, max=num_priors - 1)
-            neg = idx_rank < num_neg.expand_as(idx_rank)
 
         # Confidence Loss Including Positive and Negative Examples
         logit = logit.view(num, -1, self.num_classes+1)
-        mask = (pos + neg).gt(0)
-        conf_p = logit[mask]
-        weight_c = conf_t[mask][:, 1]
-        loss_c = torch.sum(F.cross_entropy(conf_p, conf_t[mask][:, 0].long(), reduction='none') * weight_c)
+        loss_c = torch.sum(F.cross_entropy(logit[mask], conf_t[mask][:, 0].long(), reduction='none') * weight)
 
         # import numpy as np
         # from utils.box_utils import point_form
@@ -150,27 +153,6 @@ class MultiBoxLoss_combined(nn.Module):
         #     #         cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (1, 0, 0))
         #     plt.imshow(img)
         #     plt.show()
-
-
-        # Compute object loss across batch for hard negative mining
-        obj_p = obj_data.view(-1, 2)
-        with torch.no_grad():
-            loss_obj = F.cross_entropy(obj_p, obj_t.long().view(-1), reduction='none') # [batch*num_priors]
-
-        with torch.no_grad():
-            # Hard Negative Mining
-            loss_obj[pos.view(-1)] = 0 # filter out pos boxes for now
-            loss_obj = loss_obj.view(num, -1)
-            _, loss_idx = loss_obj.sort(1, descending=True)
-            _, idx_rank = loss_idx.sort(1)
-            neg = idx_rank < num_neg.expand_as(idx_rank) # [batch, num_priors] 每张图里取loss_obj最大的num_neg个框用来计算loss_obj
-
-        # Object Loss Including Positive and Negative Examples
-        mask = (pos + neg).gt(0)
-        obj_p = obj_data[mask]
-        obj_t = obj_t[mask]
-        weight_o = conf_t[mask][:, 1]
-        loss_obj = torch.sum(F.cross_entropy(obj_p, obj_t.long(), reduction='none') * weight_o)
 
         # Sum of losses: L(x,c,l,g) = (Lconf(x, c) + αLloc(x,l,g)) / N
         N = weight_pos.sum()

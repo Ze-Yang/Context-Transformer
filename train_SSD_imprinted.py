@@ -9,7 +9,7 @@ import torch.nn.init as init
 import argparse
 import torch.utils.data as data
 import numpy as np
-from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, BaseTransform, preproc, EpisodicBatchSampler
+from data import VOCroot, COCOroot, VOC_SSD_300, COCO_SSD_300, BaseTransform, preproc, EpisodicBatchSampler
 from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
 from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
 from layers.functions import PriorBox
@@ -24,7 +24,7 @@ from logger import Logger
 
 parser = argparse.ArgumentParser(
     description='Receptive Field Block Net Training')
-parser.add_argument('-v', '--version', default='RFB_vgg',
+parser.add_argument('-v', '--version', default='SSD_vgg',
                     help='RFB_vgg ,RFB_E_vgg or RFB_mobile version.')
 parser.add_argument('--size', default='300',
                     help='300 or 512 input size.')
@@ -48,7 +48,7 @@ parser.add_argument('--cuda', default=True,
                     type=bool, help='Use cuda to train model')
 parser.add_argument('--ngpu', default=4, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate',
-                    default=4e-3, type=float, help='initial learning rate')
+                    default=1e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument(
     '--resume_net', default='weights/RFB_vgg_COCO_epoches_150.pth', help='resume net for retraining')
@@ -60,7 +60,7 @@ parser.add_argument('--mixup', action='store_true',
                         help='whether to enable mixup.')
 parser.add_argument('--no_mixup_epochs', type=int, default=15,
                         help='Disable mixup training if enabled in the last N epochs.')
-parser.add_argument('-s', '--random_seed', type=int, default=100,
+parser.add_argument('-s', '--random_seed', type=int, default=None,
                         help='Random seed for 5shot image samples.')
 parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
@@ -77,19 +77,14 @@ if not os.path.exists(args.save_folder):
 
 if args.dataset == 'VOC':
     train_sets = [('2007', 'trainval'), ('2012', 'trainval')]
-    cfg = (VOC_300, VOC_512)[args.size == '512']
+    cfg = VOC_SSD_300
 else:
     # train_sets = [('2014', 'train'), ('2014', 'valminusminival')]
     train_sets = [('2014', 'trainval')]
-    cfg = (COCO_300, COCO_512)[args.size == '512']
+    cfg = COCO_SSD_300
 
-if args.version == 'RFB_vgg':
-    from models.RFB_Net_vgg_imprinted import build_net
-elif args.version == 'RFB_E_vgg':
-    from models.RFB_Net_E_vgg import build_net
-elif args.version == 'RFB_mobile':
-    from models.RFB_Net_mobile import build_net
-    cfg = COCO_mobile_300
+if args.version == 'SSD_vgg':
+    from models.SSD_Net_vgg_imprinted import build_net
 else:
     print('Unknown version!')
 
@@ -102,7 +97,7 @@ feature_dim = 60
 n_way = 20
 num = args.batch_size
 
-net = build_net('train', img_dim, feature_dim, overlap_threshold)
+net = build_net('train', img_dim, feature_dim)
 print(net)
 if args.resume_net == None:
     base_weights = torch.load(args.basenet)
@@ -137,14 +132,15 @@ else:
     # load resume network
     print('Loading resume network...')
     state_dict = torch.load(args.resume_net)
-    # create new OrderedDict that does not contain `module.`
+    # create new OrderedDict
     from collections import OrderedDict
 
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
-        head = k[:7]
-        if head == 'module.':
-            name = k[7:]  # remove `module.`
+        if 'vgg' in k:
+            name = 'base' + k[3:]
+        elif 'L2Norm' in k:
+            name = 'Norm' + k[6:]
         else:
             name = k
         new_state_dict[name] = v
@@ -153,15 +149,18 @@ else:
     init.kaiming_normal_(net.theta.weight, mode='fan_out')
     init.kaiming_normal_(net.phi.weight, mode='fan_out')
     init.kaiming_normal_(net.g.weight, mode='fan_out')
+    # net.theta.weight.data.fill_(0)
+    # net.phi.weight.data.fill_(0)
+    # net.g.weight.data.fill_(0)
     net.theta.bias.data.fill_(0)
     net.phi.bias.data.fill_(0)
     net.g.bias.data.fill_(0)
     net.Wz.data.fill_(0)
 
 optimizer = optim.SGD([
-                            {'params': net.base.parameters(), 'lr': 0.1*args.lr},
-                            {'params': net.Norm.parameters(), 'lr': 0.5*args.lr},
-                            {'params': net.extras.parameters(), 'lr': 0.5*args.lr},
+                            {'params': net.base.parameters(), 'lr': args.lr},
+                            {'params': net.Norm.parameters(), 'lr': args.lr},
+                            {'params': net.extras.parameters(), 'lr': args.lr},
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
