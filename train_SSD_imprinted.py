@@ -14,7 +14,6 @@ from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
 from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
 from layers.functions import PriorBox
 from utils.box_utils import match
-# from utils.mixup import mixup_data
 import time
 from data.voc0712_meta import VOC_CLASSES
 from data.coco_voc_form import COCO_CLASSES
@@ -23,9 +22,9 @@ from logger import Logger
 # np.random.seed(100)
 
 parser = argparse.ArgumentParser(
-    description='Receptive Field Block Net Training')
+    description='SSD Training')
 parser.add_argument('-v', '--version', default='SSD_vgg',
-                    help='RFB_vgg ,RFB_E_vgg or RFB_mobile version.')
+                    help='SSD_vgg ,SSD_E_vgg or SSD_mobile version.')
 parser.add_argument('--size', default='300',
                     help='300 or 512 input size.')
 parser.add_argument('-d', '--dataset', default='VOC',
@@ -48,10 +47,10 @@ parser.add_argument('--cuda', default=True,
                     type=bool, help='Use cuda to train model')
 parser.add_argument('--ngpu', default=4, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate',
-                    default=1e-3, type=float, help='initial learning rate')
+                    default=4e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument(
-    '--resume_net', default='weights/RFB_vgg_COCO_epoches_150.pth', help='resume net for retraining')
+    '--resume_net', default=None, help='resume net for retraining')
 parser.add_argument('--resume_epoch', default=0,
                     type=int, help='resume iter for retraining')
 parser.add_argument('-max', '--max_epoch', default=40,
@@ -89,8 +88,8 @@ else:
     print('Unknown version!')
 
 img_dim = (300, 512)[args.size == '512']
-rgb_means = ((104, 117, 123), (103.94, 116.78, 123.68))[args.version == 'RFB_mobile']
-p = (0.6, 0.2)[args.version == 'RFB_mobile']
+rgb_means = ((104, 117, 123), (103.94, 116.78, 123.68))[args.version == 'SSD_mobile']
+p = (0.6, 0.2)[args.version == 'SSD_mobile']
 num_classes = 21
 overlap_threshold = 0.5
 feature_dim = 60
@@ -99,7 +98,7 @@ num = args.batch_size
 
 net = build_net('train', img_dim, feature_dim)
 print(net)
-if args.resume_net == None:
+if args.resume_net is None:
     base_weights = torch.load(args.basenet)
     print('Loading base network...')
     net.base.load_state_dict(base_weights)
@@ -124,7 +123,7 @@ if args.resume_net == None:
     net.conf.apply(weights_init)
     net.obj.apply(weights_init)
     net.Norm.apply(weights_init)
-    if args.version == 'RFB_E_vgg':
+    if args.version == 'SSD_E_vgg':
         net.reduce.apply(weights_init)
         net.up_reduce.apply(weights_init)
 
@@ -158,9 +157,9 @@ else:
     net.Wz.data.fill_(0)
 
 optimizer = optim.SGD([
-                            {'params': net.base.parameters(), 'lr': args.lr},
-                            {'params': net.Norm.parameters(), 'lr': args.lr},
-                            {'params': net.extras.parameters(), 'lr': args.lr},
+                            {'params': net.base.parameters(), 'lr': 0.1*args.lr},
+                            {'params': net.Norm.parameters(), 'lr': 0.5*args.lr},
+                            {'params': net.extras.parameters(), 'lr': 0.5*args.lr},
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
@@ -304,7 +303,10 @@ def train(net):
 
             epoch += 1
             scheduler.step()  # 等价于lr = args.lr * (gamma ** (step_index))
-            lr = scheduler.get_lr()
+            lr = scheduler.get_lr()[3]
+
+        if epoch < 4:  # warmup
+            lr = adjust_learning_rate(optimizer, iteration, epoch_size)  # gamma = 0.1
 
         # load train data
         images, targets = next(batch_iterator)  # [n_way, n_shot, 3, im_size, im_size]
@@ -341,12 +343,12 @@ def train(net):
                       + ' || Totel iter ' +
                       repr(iteration) + ' || L: %.4f C: %.4f O: %.4f ||' % (
                           loss_l.item(), loss_c.item(), loss_obj.item()) +
-                      ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f, %.8f' % (lr[0], lr[3]))
+                      ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f' % lr)
                 if args.log:
                     logger.scalar_summary('loc_loss', loss_l.item(), iteration)
                     logger.scalar_summary('conf_loss', loss_c.item(), iteration)
                     logger.scalar_summary('obj_loss', loss_obj.item(), iteration)
-                    logger.scalar_summary('lr', max(lr), iteration)
+                    logger.scalar_summary('lr', lr, iteration)
             t0 = time.time()
 
         first_or_not = 0
@@ -417,7 +419,7 @@ def adjust_learning_rate(optimizer, iteration, epoch_size):
     # Adapted from PyTorch Imagenet example:
     # https://github.com/pytorch/examples/blob/master/imagenet/main.py
     """
-    lr = 1e-6 + (args.lr - 1e-6) * iteration / (epoch_size * 5)  # 前5个epoch有warm up的过程
+    lr = 1e-6 + (args.lr - 1e-6) * iteration / (epoch_size * 3)  # 前5个epoch有warm up的过程
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr

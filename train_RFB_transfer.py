@@ -13,7 +13,7 @@ from torch.autograd import Variable
 import torch.utils.data as data
 from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, BaseTransform, preproc, EpisodicBatchSampler
 from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
-from layers.modules.multibox_loss_combined_tf import MultiBoxLoss_combined
+from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
 from layers.functions import PriorBox
 import time
 from logger import Logger
@@ -76,9 +76,7 @@ else:
     cfg = (COCO_300, COCO_512)[args.size == '512']
 
 if args.version == 'RFB_vgg':
-    # from models.RFB_Net_vgg import build_net
-    from models.RFB_Net_vgg_meta1 import build_net
-    # from models.RFB_Net_vgg_add_feature_layer import build_net
+    from models.RFB_Net_vgg import build_net
 elif args.version == 'RFB_E_vgg':
     from models.RFB_Net_E_vgg import build_net
 elif args.version == 'RFB_mobile':
@@ -91,13 +89,9 @@ img_dim = (300, 512)[args.size == '512']
 rgb_means = ((104, 117, 123), (103.94, 116.78, 123.68))[args.version == 'RFB_mobile']
 p = (0.6, 0.2)[args.version == 'RFB_mobile']
 num_classes = (21, 61)[args.dataset == 'COCO']
-#num_classes = 61
 overlap_threshold = 0.5
-# weight_decay = 0.0005
-# gamma = 0.1
-# momentum = 0.9
 
-net = build_net('train', img_dim, num_classes - 1, overlap_threshold)
+net = build_net('train', img_dim, num_classes - 1)
 print(net)
 if args.resume_net == None:
     base_weights = torch.load(args.basenet)

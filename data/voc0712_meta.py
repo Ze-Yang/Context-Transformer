@@ -417,6 +417,8 @@ class VOCDetection(data.Dataset):
             if cls == '__background__':
                 continue
 
+            # cls = 'sofa'
+
             filename = self._get_voc_results_file_template().format(cls)
             rec, prec, ap = voc_eval(
                                     filename, annopath, imagesetfile, cls, cachedir, ovthresh=0.5,

@@ -29,6 +29,8 @@ parser.add_argument('-s', '--size', default='300',
                     help='300 or 512 input size.')
 parser.add_argument('-d', '--dataset', default='VOC',
                     help='VOC or COCO version')
+parser.add_argument('--method', default='CAU',
+                    help='CAU or TF(transfer)')
 parser.add_argument('-m', '--trained_model', default='weights/RFB_vgg_VOC_epoches_190.pth',
                     type=str, help='Trained state_dict file path to open')
 parser.add_argument('--save_folder', default='eval/', type=str,
@@ -51,7 +53,10 @@ else:
     cfg = COCO_SSD_300
 
 if args.version == 'SSD_vgg':
-    from models.SSD_Net_vgg_imprinted import build_net
+    if args.method == 'CAU':
+        from models.SSD_Net_vgg_imprinted import build_net
+    elif args.method == 'TF':
+        from models.SSD_Net_vgg import build_net
 else:
     print('Unknown version!')
 
@@ -287,7 +292,12 @@ def plot_embedding(X, y, title=None):
 if __name__ == '__main__':
     # load net
     img_dim = (300, 512)[args.size=='512']
-    feature_dim = 60
+    if args.method == 'CAU':
+        feature_dim = 60
+    elif args.method == 'TF':
+        feature_dim = 20
+    else:
+        print('The value of args.method is not invalid.')
     net = build_net('test', img_dim, feature_dim)    # initialize detector
     state_dict = torch.load(args.trained_model)
     # create new OrderedDict

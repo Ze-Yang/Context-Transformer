@@ -1,12 +1,7 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-from layers import *
-import torchvision.transforms as transforms
-import torchvision.models as models
-import torch.backends.cudnn as cudnn
 import os
+
 
 class BasicConv(nn.Module):
 
@@ -24,6 +19,7 @@ class BasicConv(nn.Module):
         if self.relu is not None:
             x = self.relu(x)
         return x
+
 
 # RFB
 class BasicRFB(nn.Module):
@@ -116,6 +112,7 @@ class BasicRFB_a(nn.Module):
 
         return out
 
+
 class RFBNet(nn.Module):
     """RFB Net for object detection
     The network is based on the SSD architecture.
@@ -155,8 +152,6 @@ class RFBNet(nn.Module):
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
         self.obj = nn.ModuleList(head[2])
-        if self.phase == 'test':
-            self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x):
         """Applies network layers and ops on input image(s) x.
@@ -182,6 +177,7 @@ class RFBNet(nn.Module):
         loc = list()
         conf = list()
         obj = list()
+        num = x.size(0)
 
         # apply vgg up to conv4_3 relu
         for k in range(23):
@@ -210,17 +206,10 @@ class RFBNet(nn.Module):
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
         obj = torch.cat([o.view(o.size(0), -1) for o in obj], 1)
 
-        if self.phase == "test":
-            output = (
-                loc.view(loc.size(0), -1, 4),                   # loc preds
-                self.softmax(conf.view(-1, self.num_classes)),  # conf preds
-                self.softmax(obj.view(-1, 2))
-            )
-        else:
-            output = (
-                loc.view(loc.size(0), -1, 4),
-                conf.view(conf.size(0), -1, self.num_classes),
-                obj.view(obj.size(0), -1, 2),
+        output = (
+                loc.view(num, -1, 4),
+                conf.view(num, -1, self.num_classes),
+                obj.view(num, -1, 2)
             )
         return output
 

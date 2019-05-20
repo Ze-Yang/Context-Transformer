@@ -30,7 +30,6 @@ def parse_rec(filename):
     return objects
 
 
-
 def voc_ap(rec, prec, use_07_metric=False):
     """ ap = voc_ap(rec, prec, [use_07_metric])
     Compute VOC AP given precision and recall.
@@ -63,6 +62,7 @@ def voc_ap(rec, prec, use_07_metric=False):
         # and sum (\Delta recall) * prec
         ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
     return ap
+
 
 def voc_eval(detpath,
              annopath,
@@ -105,7 +105,7 @@ def voc_eval(detpath,
         lines = f.readlines()
     imagenames = [x.strip() for x in lines]
 
-    if not os.path.isfile(cachefile):
+    if not os.path.isfile(cachefile):  # 第一次测的时候把annots从xml文件中提取出来,存在cache_file里
         # load annots
         recs = {}
         for i, imagename in enumerate(imagenames):
@@ -148,7 +148,7 @@ def voc_eval(detpath,
     # sort by confidence
     sorted_ind = np.argsort(-confidence)
     sorted_scores = confidence[sorted_ind]
-    BB = BB[sorted_ind, :]
+    BB = BB[sorted_ind, :] if BB.size != 0 else BB
     image_ids = [image_ids[x] for x in sorted_ind]
 
     # go down dets and mark TPs and FPs
@@ -156,11 +156,18 @@ def voc_eval(detpath,
     tp = np.zeros(nd)
     fp = np.zeros(nd)
     for d in range(nd):
-        R = class_recs[image_ids[d]] # a dict that consists of all groundtruth boxes that belong to this class in an image
-        bb = BB[d, :].astype(float) # 一个
+        # if image_ids[d] in ids:
+        R = class_recs[image_ids[d]]  # a dict that consists of all groundtruth boxes that belong to this class in an image
+        bb = BB[d, :].astype(float)  # 一个
         ovmax = -np.inf
-        BBGT = R['bbox'].astype(float) # 多个
-
+        BBGT = R['bbox'].astype(float)
+        '''
+        # for visualization
+        import cv2
+        rootpath = os.path.join('../data/VOCdevkit/', 'VOC2007')
+        imgpath = os.path.join(rootpath, 'JPEGImages', '%s.jpg')
+        img = cv2.imread(imgpath % image_ids[d], cv2.IMREAD_COLOR)
+        '''
         if BBGT.size > 0:
             # compute overlaps
             # intersection
@@ -178,7 +185,7 @@ def voc_eval(detpath,
                    (BBGT[:, 3] - BBGT[:, 1] + 1.) - inters)
 
             overlaps = inters / uni
-            ovmax = np.max(overlaps)
+            ovmax = np.max(overlaps)    # 某一个bb框与BBGT框overlap的最大值
             jmax = np.argmax(overlaps)
 
         if ovmax > ovthresh:
@@ -193,6 +200,8 @@ def voc_eval(detpath,
 
         # BBGT = BBGT if BBGT.size == 0 else BBGT[jmax, :]
         # det_visualize(classname, image_ids[d], sorted_scores[d], bb, BBGT, tp[d], fp[d], ovmax > ovthresh)
+        # id = image_ids[d]
+        # a = 0
 
     # compute precision recall
     fp = np.cumsum(fp)
@@ -206,9 +215,25 @@ def voc_eval(detpath,
     return rec, prec, ap
 
 def det_visualize(cls, img_id, conf, bb, BBGT, tp, fp, is_ov):
+    '''
+    blue for ground truth bounding box
+    green for true positive detect result
+    red for false positive detect result
+
+    :param cls: class to visualize
+    :param img_id: image id list
+    :param conf: detect confidence
+    :param bb: detect bounding box
+    :param BBGT: ground truth bounding box
+    :param tp: is true positive or not
+    :param fp: is false positive or not
+    :param is_ov: iou with ground truth bounding box surpass threshold or not
+    :return:
+    '''
+
     import cv2
     import matplotlib.pyplot as plt
-    from .voc0712_meta import VOC_CLASSES
+    from .voc0712 import VOC_CLASSES
     from .coco_voc_form import COCO_CLASSES
     if cls in VOC_CLASSES:
         dataset = 'VOC'
@@ -222,24 +247,38 @@ def det_visualize(cls, img_id, conf, bb, BBGT, tp, fp, is_ov):
     img = cv2.imread(imgpath % img_id, cv2.IMREAD_COLOR)
     img = img[:, :, ::-1] / 255
     img = img.copy()
-    fig = plt.figure()
+    # fig = plt.figure()
     BBGT = BBGT.astype(np.int16)
     bb = bb.astype(np.int16)
-    if BBGT.size>0:
-        cv2.rectangle(img, (BBGT[0], BBGT[1]), (BBGT[2], BBGT[3]), (0, 0, 1))  # ground truth
+    if len(BBGT) > 0:
+        for i in range(BBGT.shape[0]):
+            cv2.rectangle(img, (BBGT[i, 0], BBGT[i, 1]), (BBGT[i, 2], BBGT[i, 3]), (0, 0, 1))  # ground truth
     if is_ov:
 
         if tp:
+            pass
+            fig = plt.figure()
             cv2.rectangle(img, (bb[0], bb[1]), (bb[2], bb[3]), (0, 1, 0)) # tp
             fig.suptitle(cls + '_tp_'+ str(conf))
-        elif fp: # already detected
+            plt.imshow(img)
+            plt.show()
+        elif fp:  # already detected
+            fig = plt.figure()
             cv2.rectangle(img, (bb[0], bb[1]), (bb[2], bb[3]), (1, 0, 0))  # fp
             fig.suptitle(cls + '_repeated_' + str(conf))
+            plt.imshow(img)
+            plt.show()
         else: # difficult
+            pass
+            fig = plt.figure()
             cv2.rectangle(img, (bb[0], bb[1]), (bb[2], bb[3]), (0, 1, 0))  # fp
             fig.suptitle(cls + '_difficult_' + str(conf))
+            plt.imshow(img)
+            plt.show()
     else:
-        cv2.rectangle(img, (bb[0], bb[1]), (bb[2], bb[3]), (1, 0, 0))  # fp
-        fig.suptitle(cls + '_not overlap_' + str(conf))
-    plt.imshow(img)
-    plt.show()
+        if conf > 0.5:
+            fig = plt.figure()
+            cv2.rectangle(img, (bb[0], bb[1]), (bb[2], bb[3]), (1, 0, 0))  # fp
+            fig.suptitle(cls + '_not overlap_' + str(conf))
+            plt.imshow(img)
+            plt.show()

@@ -378,7 +378,7 @@ mbox = {
 }
 
 
-def build_net(phase, size=300, num_classes=21, overlap_threshold=0.5):
+def build_net(phase, size=300, num_classes=21):
     if phase != "test" and phase != "train":
         print("Error: Phase not recognized")
         return

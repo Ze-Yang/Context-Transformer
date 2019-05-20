@@ -31,6 +31,8 @@ parser.add_argument('-s', '--size', default='300',
                     help='300 or 512 input size.')
 parser.add_argument('-d', '--dataset', default='VOC',
                     help='VOC or COCO version')
+parser.add_argument('--method', default='CAU',
+                    help='CAU or TF(transfer)')
 parser.add_argument('-m', '--trained_model', default='weights/RFB_vgg_VOC_epoches_190.pth',
                     type=str, help='Trained state_dict file path to open')
 parser.add_argument('--save_folder', default='eval/', type=str,
@@ -53,7 +55,10 @@ else:
     cfg = (COCO_300, COCO_512)[args.size == '512']
 
 if args.version == 'RFB_vgg':
-    from models.RFB_Net_vgg_imprinted import build_net
+    if args.method == 'CAU':
+        from models.RFB_Net_vgg_imprinted import build_net
+    elif args.method == 'TF':
+        from models.RFB_Net_vgg import build_net
 elif args.version == 'RFB_E_vgg':
     from models.RFB_Net_E_vgg import build_net
 elif args.version == 'RFB_mobile':
@@ -71,7 +76,6 @@ with torch.no_grad():
 rgb_means = ((104, 117, 123),(103.94,116.78,123.68))[args.version == 'RFB_mobile']
 num_classes = (21, 61)[args.dataset == 'COCO']
 overlap_threshold = 0.5
-n_way = num_classes - 1
 num_priors = priors.size(0)
 p = 0.6
 
@@ -289,10 +293,16 @@ def plot_embedding(X, y, title=None):
     if title is not None:
         plt.title(title)
 
+
 if __name__ == '__main__':
     # load net
-    img_dim = (300,512)[args.size=='512']
-    feature_dim = 60
+    img_dim = (300, 512)[args.size=='512']
+    if args.method == 'CAU':
+        feature_dim = 60
+    elif args.method == 'TF':
+        feature_dim = 20
+    else:
+        print('The value of args.method is not invalid.')
     net = build_net('test', img_dim, feature_dim)    # initialize detector
     state_dict = torch.load(args.trained_model)
     # create new OrderedDict that does not contain `module.`
