@@ -127,7 +127,7 @@ def match(threshold, truths, priors, variances, labels, loc_t, conf_t, obj_t, id
     matches = truths[best_truth_idx]          # truths[obj_num, 4], matches[num_priors,4]
     conf = labels[best_truth_idx]             # labels[num_priors]
     conf[best_truth_overlap < threshold, 0] = 0  # label as background
-    conf[best_truth_overlap < threshold, 1] = 1
+    conf[best_truth_overlap < threshold, 1] = 1  # set the weight for bg as 1
     loc = encode(matches, priors, variances)
     obj = conf[:, 0] != 0
     loc_t[idx] = loc    # [num_priors,4] encoded offsets to learn

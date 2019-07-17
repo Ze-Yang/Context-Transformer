@@ -1,31 +1,27 @@
 from __future__ import print_function
-import sys
 import os
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torch.nn.init as init
 import argparse
 import torch.utils.data as data
 import numpy as np
-from data import VOCroot, COCOroot, VOC_SSD_300, COCO_SSD_300, BaseTransform, preproc, EpisodicBatchSampler
-from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
-from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
+from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, BaseTransform, preproc, EpisodicBatchSampler
+from data.voc0712_incre import AnnotationTransform, VOCDetection, detection_collate, VOC_CLASSES
+from layers.modules.multibox_loss_combined import MultiBoxLoss_combined
 from layers.functions import PriorBox
 from utils.box_utils import match
 import time
-from data.voc0712_meta import VOC_CLASSES
-from data.coco_voc_form import COCO_CLASSES
 from logger import Logger
 # torch.cuda.set_device(7)
 # np.random.seed(100)
 
 parser = argparse.ArgumentParser(
-    description='SSD Training')
-parser.add_argument('-v', '--version', default='SSD_vgg',
-                    help='SSD_vgg ,SSD_E_vgg or SSD_mobile version.')
-parser.add_argument('--size', default='300',
+    description='Receptive Field Block Net Training')
+parser.add_argument('-v', '--version', default='RFB_vgg',
+                    help='RFB_vgg ,RFB_E_vgg or RFB_mobile version.')
+parser.add_argument('-s', '--size', default='300',
                     help='300 or 512 input size.')
 parser.add_argument('-d', '--dataset', default='VOC',
                     help='VOC or COCO dataset')
@@ -45,7 +41,7 @@ parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
 parser.add_argument('--cuda', default=True,
                     type=bool, help='Use cuda to train model')
-parser.add_argument('--ngpu', default=4, type=int, help='gpus')
+parser.add_argument('--ngpu', default=1, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate',
                     default=4e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
@@ -53,14 +49,12 @@ parser.add_argument(
     '--resume_net', default=None, help='resume net for retraining')
 parser.add_argument('--resume_epoch', default=0,
                     type=int, help='resume iter for retraining')
-parser.add_argument('-max', '--max_epoch', default=40,
+parser.add_argument('-max', '--max_epoch', default=20,
                     type=int, help='max epoch for retraining')
 parser.add_argument('--mixup', action='store_true',
                         help='whether to enable mixup.')
-parser.add_argument('--no_mixup_epochs', type=int, default=15,
+parser.add_argument('--no_mixup_epochs', type=int, default=12,
                         help='Disable mixup training if enabled in the last N epochs.')
-parser.add_argument('-s', '--random_seed', type=int, default=None,
-                        help='Random seed for 5shot image samples.')
 parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
 parser.add_argument('--gamma', default=0.1,
@@ -75,30 +69,36 @@ if not os.path.exists(args.save_folder):
     os.mkdir(args.save_folder)
 
 if args.dataset == 'VOC':
-    train_sets = [('2007', 'trainval'), ('2012', 'trainval')]
-    cfg = VOC_SSD_300
+    # train_sets = [('2007', 'trainval'), ('2012', 'trainval')]
+    train_sets = [('2007', 'trainval')]
+    cfg = (VOC_300, VOC_512)[args.size == '512']
 else:
     # train_sets = [('2014', 'train'), ('2014', 'valminusminival')]
     train_sets = [('2014', 'trainval')]
-    cfg = COCO_SSD_300
+    cfg = (COCO_300, COCO_512)[args.size == '512']
 
-if args.version == 'SSD_vgg':
-    from models.SSD_Net_vgg_imprinted import build_net
+if args.version == 'RFB_vgg':
+    from models.RFB_Net_vgg_CAU_incre import build_net
+elif args.version == 'RFB_E_vgg':
+    from models.RFB_Net_E_vgg import build_net
+elif args.version == 'RFB_mobile':
+    from models.RFB_Net_mobile import build_net
+    cfg = COCO_mobile_300
 else:
     print('Unknown version!')
 
 img_dim = (300, 512)[args.size == '512']
-rgb_means = ((104, 117, 123), (103.94, 116.78, 123.68))[args.version == 'SSD_mobile']
-p = (0.6, 0.2)[args.version == 'SSD_mobile']
+rgb_means = ((104, 117, 123), (103.94, 116.78, 123.68))[args.version == 'RFB_mobile']
+p = (0.6, 0.2)[args.version == 'RFB_mobile']
 num_classes = 21
 overlap_threshold = 0.5
-feature_dim = 60
+feature_dim = 15
 n_way = 20
-num = args.batch_size
+num = args.n_shot_task * 5
 
-net = build_net('train', img_dim, feature_dim)
+net = build_net('train', img_dim, feature_dim, overlap_threshold)
 print(net)
-if args.resume_net is None:
+if args.resume_net == None:
     base_weights = torch.load(args.basenet)
     print('Loading base network...')
     net.base.load_state_dict(base_weights)
@@ -123,7 +123,7 @@ if args.resume_net is None:
     net.conf.apply(weights_init)
     net.obj.apply(weights_init)
     net.Norm.apply(weights_init)
-    if args.version == 'SSD_E_vgg':
+    if args.version == 'RFB_E_vgg':
         net.reduce.apply(weights_init)
         net.up_reduce.apply(weights_init)
 
@@ -131,26 +131,25 @@ else:
     # load resume network
     print('Loading resume network...')
     state_dict = torch.load(args.resume_net)
-    # create new OrderedDict
+    # create new OrderedDict that does not contain `module.`
     from collections import OrderedDict
 
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
-        if 'vgg' in k:
-            name = 'base' + k[3:]
-        elif 'L2Norm' in k:
-            name = 'Norm' + k[6:]
+        head = k[:7]
+        if head == 'module.':
+            name = k[7:]  # remove `module.`
         else:
             name = k
         new_state_dict[name] = v
     net.load_state_dict(new_state_dict, strict=False)
     net.scale.requires_grad = False
+    net.fc_base.weight.data.fill_(0)
+    # init.kaiming_normal_(net.fc_base.weight, mode='fan_out')
     init.kaiming_normal_(net.theta.weight, mode='fan_out')
     init.kaiming_normal_(net.phi.weight, mode='fan_out')
     init.kaiming_normal_(net.g.weight, mode='fan_out')
-    # net.theta.weight.data.fill_(0)
-    # net.phi.weight.data.fill_(0)
-    # net.g.weight.data.fill_(0)
+    net.fc_base.bias.data.fill_(0)
     net.theta.bias.data.fill_(0)
     net.phi.bias.data.fill_(0)
     net.g.bias.data.fill_(0)
@@ -163,10 +162,11 @@ optimizer = optim.SGD([
                             {'params': net.loc.parameters()},
                             {'params': net.conf.parameters()},
                             {'params': net.obj.parameters()},
+                            {'params': net.fc_base.parameters()},
                             {'params': net.theta.parameters()},
                             {'params': net.phi.parameters()},
                             {'params': net.g.parameters()},
-                            {'params': net.imprinted_matrix},
+                            {'params': net.imprinted_matrix.parameters()},
                             {'params': net.Wz},
                             # {'params': net.scale},
                         ], lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
@@ -197,31 +197,56 @@ num_priors = priors.size(0)
 def train(net):
 
     net.train()
-    if args.ngpu > 1:
-        net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)), output_device=0)
 
     with torch.no_grad():
         print('Loading Dataset...')
         if args.dataset == 'VOC':
-            # dataset_init = VOCDetection(VOCroot, train_sets, preproc(img_dim, rgb_means, p),
-            #                        VOC_AnnotationTransform(), n_shot, 0,
-            #                        phase='test_support', n_shot_task=args.n_shot_task)
-            dataset = VOCDetection(VOCroot, train_sets, preproc(img_dim, rgb_means, p),
-                                   AnnotationTransform(), n_shot_task=args.n_shot_task, random_seed=args.random_seed)
+            dataset = VOCDetection(VOCroot, train_sets, preproc(
+                img_dim, rgb_means, p), AnnotationTransform(), n_shot_task=args.n_shot_task, phase='init')
         else:
             print('Only VOC is supported now!')
             return
 
+        # idx_list = []
+        # for i in range(len(dataset)):
+        #     num = 0
+        #     _, targets, idx = dataset[i]
+        #     for j in targets[:, 4]:
+        #         if j in [3, 6, 10, 14, 18]:  # for split one
+        #             num += 1
+        #     if num == 0:
+        #         idx_list.append(idx)
+        #
+        # import numpy as np
+        # import matplotlib.pyplot as plt
+        # import cv2
+        # idx_list = []
+        # print(len(dataset))
+        # for i in range(len(dataset)):
+        #     num = 0
+        #     img, targets, idx = dataset[i]
+        #     img = img.cpu().numpy()
+        #     img = np.transpose(img, (1, 2, 0))
+        #     img = (img + np.array([104, 117, 123])) / 255  # RGB
+        #     img = img[:, :, ::-1].copy()  # BGR
+        #     if targets[:, -2] == 20:
+        #         boxes = targets[:, :4]
+        #         boxes = (boxes * 300).astype(np.uint16)
+        #         for k in range(boxes.shape[0]):
+        #             cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (0, 1, 0))
+        #         plt.imshow(img)
+        #         plt.show()
+
         print('Initializing the imprinted matrix...')
-        sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
-                                       n_episodes=args.support_episodes, phase='train')
+        sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.n_shot_task*5,  # set batch size as all training samples
+                                       n_episodes=args.support_episodes, phase='init')
         batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
                                               collate_fn=detection_collate))
 
         if args.cuda:
-            way_list = [torch.empty(0).cuda() for _ in range(n_way)]
+            way_list = [torch.empty(0).cuda() for _ in range(5)]
         else:
-            way_list = [torch.empty(0) for _ in range(n_way)]
+            way_list = [torch.empty(0) for _ in range(5)]
 
         for _ in range(args.support_episodes):
             # load support data
@@ -255,18 +280,29 @@ def train(net):
                 defaults = priors.data  # [num_priors,4]
                 match(overlap_threshold, truths, defaults, [0.1, 0.2], labels, loc_t, conf_t, obj_t, idx)
 
-            conf_data_list = [conf_data[conf_t[:, :, 0] == i] for i in range(1, num_classes)]
-            way_list = [torch.cat((way_list[i], conf_data_list[i]), 0) for i in range(n_way)]
+            conf_data_list = [conf_data[conf_t[:, :, 0] == i] for i in range(16, num_classes)]
+            way_list = [torch.cat((way_list[i], conf_data_list[i]), 0) for i in range(5)]
         way_list = [(item / torch.norm(item, dim=1, keepdim=True)).mean(0) for item in way_list]
-        net.module.imprinted_matrix.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [n_way, num_classes]
+        net.imprinted_matrix.weight.data = torch.stack([item / torch.norm(item) for item in way_list], 0)  # [n_way, num_classes]
 
     print('Fine tuning on ' + str(args.n_shot_task) + 'shot task')
+
+    if args.ngpu > 1:
+        net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)), output_device=0)
+
+    if args.dataset == 'VOC':
+        dataset = VOCDetection(VOCroot, train_sets, preproc(
+            img_dim, rgb_means, p), AnnotationTransform(), n_shot_task=args.n_shot_task)
+    else:
+        print('Only VOC is supported now!')
+        return
+
     dataset.set_mixup(np.random.beta, 1.5, 1.5)
     epoch = 0 + args.resume_epoch
     epoch_size = args.train_episodes
     max_iter = args.max_epoch * epoch_size
 
-    milestones_VOC = [30, 35]
+    milestones_VOC = [12, 16]
     milestones_COCO = [30, 60, 90]
     milestones = (milestones_VOC, milestones_COCO)[args.dataset == 'COCO']
 
@@ -303,10 +339,7 @@ def train(net):
 
             epoch += 1
             scheduler.step()  # 等价于lr = args.lr * (gamma ** (step_index))
-            lr = scheduler.get_lr()[3]
-
-        if epoch < 4:  # warmup
-            lr = adjust_learning_rate(optimizer, iteration, epoch_size)  # gamma = 0.1
+            lr = scheduler.get_lr()
 
         # load train data
         images, targets = next(batch_iterator)  # [n_way, n_shot, 3, im_size, im_size]
@@ -343,12 +376,12 @@ def train(net):
                       + ' || Totel iter ' +
                       repr(iteration) + ' || L: %.4f C: %.4f O: %.4f ||' % (
                           loss_l.item(), loss_c.item(), loss_obj.item()) +
-                      ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f' % lr)
+                      ' Time: %.4f sec. ||' % (t1 - t0) + ' LR: %.8f, %.8f' % (lr[0], lr[3]))
                 if args.log:
                     logger.scalar_summary('loc_loss', loss_l.item(), iteration)
                     logger.scalar_summary('conf_loss', loss_c.item(), iteration)
                     logger.scalar_summary('obj_loss', loss_obj.item(), iteration)
-                    logger.scalar_summary('lr', lr, iteration)
+                    logger.scalar_summary('lr', max(lr), iteration)
             t0 = time.time()
 
         first_or_not = 0
@@ -376,9 +409,10 @@ def vis_picture(imgs, targets):
 
     for i in range(num):
         img = imgs[i, :, :, :].copy()
-        labels = targets[i][:, -1]
+        labels = targets[i][:, -2]
         boxes = targets[i][:, :4]
         boxes = (boxes * 300).astype(np.uint16)
+        boxes = boxes[labels != -1]
         for k in range(boxes.shape[0]):
             cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (0, 1, 0))
         plt.imshow(img)
@@ -419,7 +453,7 @@ def adjust_learning_rate(optimizer, iteration, epoch_size):
     # Adapted from PyTorch Imagenet example:
     # https://github.com/pytorch/examples/blob/master/imagenet/main.py
     """
-    lr = 1e-6 + (args.lr - 1e-6) * iteration / (epoch_size * 3)  # 前5个epoch有warm up的过程
+    lr = 1e-6 + (args.lr - 1e-6) * iteration / (epoch_size * 5)  # warmup
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr

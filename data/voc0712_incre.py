@@ -23,12 +23,36 @@ else:
     import xml.etree.ElementTree as ET
 
 
-VOC_CLASSES = ( '__background__', # always index 0
-    'aeroplane', 'bicycle', 'bird', 'boat',
-    'bottle', 'bus', 'car', 'cat', 'chair',
-    'cow', 'diningtable', 'dog', 'horse',
-    'motorbike', 'person', 'pottedplant',
-    'sheep', 'sofa', 'train', 'tvmonitor')
+# VOC_CLASSES = ( '__background__', # always index 0
+#     'aeroplane', 'bicycle', 'bird', 'boat',
+#     'bottle', 'bus', 'car', 'cat', 'chair',
+#     'cow', 'diningtable', 'dog', 'horse',
+#     'motorbike', 'person', 'pottedplant',
+#     'sheep', 'sofa', 'train', 'tvmonitor')
+
+# for data split 1
+VOC_CLASSES = ( '__background__',
+    'aeroplane', 'bicycle', 'boat', 'bottle',
+    'car', 'cat', 'chair', 'diningtable',
+    'dog', 'horse', 'person', 'pottedplant',
+    'sheep', 'train', 'tvmonitor', 'bird',
+    'bus', 'cow', 'motorbike', 'sofa')
+
+# # for data split 2
+# VOC_CLASSES = ( '__background__', # always index 0
+#     'bicycle', 'bird', 'boat', 'bus',
+#     'car', 'cat', 'chair', 'diningtable',
+#     'dog', 'motorbike', 'person', 'pottedplant',
+#     'sheep', 'train', 'tvmonitor', 'aeroplane',
+#     'bottle', 'cow', 'horse', 'sofa')
+#
+# # for data split 3
+# VOC_CLASSES = ( '__background__', # always index 0
+#     'aeroplane', 'bicycle', 'bird', 'bottle',
+#     'bus', 'car', 'chair', 'cow',
+#     'diningtable', 'dog', 'horse', 'person',
+#     'pottedplant', 'train', 'tvmonitor', 'boat',
+#     'cat', 'motorbike', 'sheep', 'sofa')
 
 # for making bounding boxes pretty
 COLORS = ((255, 0, 0, 128), (0, 255, 0, 128), (0, 0, 255, 128),
@@ -158,7 +182,7 @@ class VOCDetection(data.Dataset):
     """
 
     def __init__(self, root, image_sets, preproc=None, target_transform=None,
-                 n_shot_task=1, random_seed=None, phase='train', dataset_name='VOC0712'):
+                 dataset_name='VOC0712', n_shot_task=1, mixup=None, phase='train'):
         self.root = root
         self.image_set = image_sets
         self.preproc = preproc
@@ -166,24 +190,27 @@ class VOCDetection(data.Dataset):
         self.name = dataset_name
         self._annopath = os.path.join('%s', 'Annotations', '%s.xml')
         self._imgpath = os.path.join('%s', 'JPEGImages', '%s.jpg')
-        self.mixup = None
-        self.mixup_args = None
+        self.mixup = mixup
+        self.mixup_args = (1.5, 1.5)
         self.ids = list()
         for (year, name) in image_sets:
             self._year = year
             rootpath = os.path.join(self.root, 'VOC' + year)
-            if phase == 'train':
-                if random_seed is not None:
-                    for line in open(os.path.join(rootpath, 'ImageSets', 'Main',
-                                                  name + '_' + str(n_shot_task) + 'shot_s' + str(random_seed) + '.txt')):
-                        self.ids.append((rootpath, line.strip()))
-                else:
-                    for line in open(os.path.join(rootpath, 'ImageSets', 'Main',
-                                                  name + '_' + str(n_shot_task) + 'shot.txt')):
-                        self.ids.append((rootpath, line.strip()))
-            else:
+            if phase == 'test':
                 for line in open(os.path.join(rootpath, 'ImageSets', 'Main', name + '.txt')):
                     self.ids.append((rootpath, line.strip()))
+                # for line in open(os.path.join(rootpath, 'ImageSets', 'Main', name + '_split3' + '.txt')):
+                #     self.ids.append((rootpath, line.strip()))
+            elif phase == 'train':
+                for cls in VOC_CLASSES[1:]:
+                    for line in open(os.path.join(rootpath, 'ImageSets', 'Main', '1_box', cls + '.txt')).readlines()[
+                                :n_shot_task]:
+                        self.ids.append((rootpath, line.strip()))
+            elif phase == 'init':
+                for cls in VOC_CLASSES[16:]:
+                    for line in open(os.path.join(rootpath, 'ImageSets', 'Main', '1_box', cls + '.txt')).readlines()[
+                                :n_shot_task]:
+                        self.ids.append((rootpath, line.strip()))
 
     def __getitem__(self, index):
         # first image
@@ -196,6 +223,9 @@ class VOCDetection(data.Dataset):
 
         if self.preproc is not None:
             img1, target1 = self.preproc(img1, target1)
+
+        # target1 = target1[np.newaxis, 0, :]
+        target1[1:, -1] = -1
 
         lambd = 1
         # draw a random lambda ratio from distribution
@@ -220,11 +250,14 @@ class VOCDetection(data.Dataset):
         if self.preproc is not None:
             img2, target2 = self.preproc(img2, target2)
 
+        target2[1:, -1] = -1
+
         # mixup two images
         mix_img = img1 * lambd + img2 * (1. - lambd)
         y1 = np.hstack((target1, np.full((target1.shape[0], 1), lambd)))
         y2 = np.hstack((target2, np.full((target2.shape[0], 1), 1. - lambd)))
         mix_target = np.vstack((y1, y2))
+        mix_target[mix_target[:, -2] == -1, -1] = 0  # set the weight of label -1 to 0
 
         return mix_img, mix_target
 
@@ -363,12 +396,14 @@ class VOCDetection(data.Dataset):
             if output_dir is not None:
                 with open(os.path.join(output_dir, cls + '_pr.pkl'), 'wb') as f:
                     pickle.dump({'rec': rec, 'prec': prec, 'ap': ap}, f)
-        print('Mean AP = {:.4f}'.format(np.mean(aps)))
+        print('Base class mAP = {:.4f}'.format(np.mean(aps[:15])))
+        print('Novel class mAP = {:.4f}'.format(np.mean(aps[15:])))
         print('~~~~~~~~')
         print('Results:')
         for ap in aps:
             print('{:.4f}'.format(ap))
-        print('{:.4f}'.format(np.mean(aps)))
+        print('{:.4f}'.format(np.mean(aps[:15])))
+        print('{:.4f}'.format(np.mean(aps[15:])))
         print('~~~~~~~~')
         print('')
         print('--------------------------------------------------------------')
@@ -377,7 +412,6 @@ class VOCDetection(data.Dataset):
         print('Recompute with `./tools/reval.py --matlab ...` for your paper.')
         print('-- Thanks, The Management')
         print('--------------------------------------------------------------')
-
 
 def detection_collate(batch):
     """Custom collate fn for dealing with batches of images that have a different
@@ -401,22 +435,5 @@ def detection_collate(batch):
                 annos = torch.from_numpy(tup).float()
                 targets.append(annos)
 
-    return torch.stack(imgs, 0), targets
+    return (torch.stack(imgs, 0), targets)
 
-
-class EpisodicBatchSampler(data.Sampler):
-    def __init__(self, n_classes, n_way, n_episodes, phase='train'):
-        self.n_classes = n_classes
-        self.n_way = n_way
-        self.n_episodes = n_episodes  # 100
-        self.phase = phase
-
-    def __len__(self):
-        return self.n_episodes
-
-    def __iter__(self):
-        for i in range(self.n_episodes):
-            if self.phase == 'train':
-                yield torch.randperm(self.n_classes)[:self.n_way].tolist()
-            else:
-                yield torch.arange(self.n_classes)[:self.n_way].tolist()

@@ -14,7 +14,7 @@ class BasicConv(nn.Module):
         super(BasicConv, self).__init__()
         self.out_channels = out_planes
         self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, groups=groups, bias=bias)
-        self.bn = nn.BatchNorm2d(out_planes,eps=1e-5, momentum=0.01, affine=True) if bn else None
+        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
         self.relu = nn.ReLU(inplace=True) if relu else None
 
     def forward(self, x):
@@ -155,10 +155,16 @@ class RFBNet(nn.Module):
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
         self.obj = nn.ModuleList(head[2])
-        if self.phase == 'test':
-            self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x):
+        self.fc_base = nn.Linear(15, 15)
+        self.theta = nn.Linear(15, 15)
+        self.phi = nn.Linear(15, 15)
+        self.g = nn.Linear(15, 15)
+        self.Wz = nn.Parameter(torch.FloatTensor(15))
+        self.imprinted_matrix = nn.Linear(15, 5, bias=False)
+        self.scale = nn.Parameter(torch.FloatTensor([5]))
+
+    def forward(self, x, phase=None):
         """Applies network layers and ops on input image(s) x.
 
         Args:
@@ -182,25 +188,18 @@ class RFBNet(nn.Module):
         loc = list()
         conf = list()
         obj = list()
-        if len(x) == 2:
-            meta_learning = True
-            n_way = x[0].size(0)
-            n_support = x[0].size(1)
-            n_query = x[1].size(1)
-            x = torch.cat(x, 1).view(-1, 3, 300, 300)
+        conf_pool = list()
+
+        if x.dim()==5:
+            n_way = x.size(0)
+            per_way = x.size(1)
+            x = x.view(-1, 3, 300, 300)
         else:
-            meta_learning = False
-            if x.dim()==5:
-                n_way = x.size(0)
-                per_way = x.size(1)
-                x = x.view(-1, 3, 300, 300)
-            else:
-                n_way = None
+            n_way = None
+            num = x.size(0)
 
         # apply vgg up to conv4_3 relu
         for k in range(23):
-            # for param in self.base[k].parameters():
-            #     a = param
             x = self.base[k](x)
 
         s = self.Norm(x)
@@ -216,40 +215,51 @@ class RFBNet(nn.Module):
             if k < self.indicator or k%2 ==0:
                 sources.append(x)
 
+        kernel_size = [3, 2, 2, 2, 1, 1]
+        stride = [3, 2, 2, 2, 1, 1]
         # apply multibox head to source layers
-        for (x, l, c, o) in zip(sources, self.loc, self.conf, self.obj):
+        for i, (x, l, c, o) in enumerate(zip(sources, self.loc, self.conf, self.obj)):
             loc.append(l(x).permute(0, 2, 3, 1).contiguous())   # [num, map_size, map_size, 6*4]
             conf.append(c(x).permute(0, 2, 3, 1).contiguous())  # [num, map_size, map_size, 6*num_classes]
             obj.append(o(x).permute(0, 2, 3, 1).contiguous())   # [num, map_size, map_size, 6*2]
+            conf_pool.append(nn.functional.max_pool2d(c(x), kernel_size=kernel_size[i], stride=stride[i],
+                                                      ceil_mode=True).permute(0, 2, 3, 1).contiguous())
 
         loc = torch.cat([o.view(o.size(0), -1) for o in loc], 1) # 把所有的feature map的输出拼合起来
         conf = torch.cat([o.view(o.size(0), -1) for o in conf], 1)
         obj = torch.cat([o.view(o.size(0), -1) for o in obj], 1)
+        conf_pool = torch.cat([o.view(o.size(0), -1) for o in conf_pool], 1)
+
+        if phase is None:
+            conf = conf.view(num, -1, self.num_classes)
+            conf_pool = conf_pool.view(num, -1, self.num_classes)
+            conf_base = self.fc_base(conf) + conf
+            conf_theta = self.theta(conf) + conf
+            conf_phi = self.phi(conf_pool) + conf_pool
+            conf_g = self.g(conf_pool) + conf_pool
+            weight = torch.matmul(conf_theta, conf_phi.transpose(1, 2))
+            weight = nn.functional.softmax(weight, dim=2)
+            delta_conf = torch.matmul(weight, conf_g) * self.Wz
+            conf_novel = conf + delta_conf
+            conf_novel = conf_novel / torch.norm(conf_novel, dim=2, keepdim=True)  # [num, num_priors, feature_dim]
+            conf_novel = self.imprinted_matrix(conf_novel) * self.scale  # [num, num_priors, 20]
+            conf = torch.cat((conf_base, conf_novel), dim=2)
+            # conf = conf + delta_conf
+            # conf = conf.view(-1, self.num_classes)
+            # conf = conf / torch.norm(conf, dim=1, keepdim=True)  # [num, num_priors, feature_dim]
+            # conf = self.imprinted_matrix(conf) * self.scale  # [num*num_priors, 20]
 
         # 把所有的feature map的输出拼合起来
-        if meta_learning:
-            loc = loc.view(n_way, n_support + n_query, -1, 4)
-            conf = conf.view(n_way, n_support + n_query, -1, self.num_classes)
-            obj = obj.view(n_way, n_support + n_query, -1, 2)
-            s_loc = loc[:, :n_support]   # [n_way, n_support, num_priors, 4]
-            s_conf = conf[:, :n_support] # [n_way, n_support, num_priors, num_classes]
-            s_obj = obj[:, :n_support]   # [n_way, n_support, num_priors, 2]
-            q_loc = loc[:, n_support:]   # [n_way, n_query, num_priors, 4]
-            q_conf = conf[:, n_support:] # [n_way, n_query, num_priors, num_classes]
-            q_obj = obj[:, n_support:]   # [n_way, n_query, num_priors, 2]
-
-            output = (s_loc, s_conf, s_obj, q_loc, q_conf, q_obj)
+        if n_way:
+            loc = loc.view(n_way, per_way, -1, 4)
+            conf = conf.view(n_way, per_way, -1, self.num_classes if phase == 'init' else 20)
+            obj = obj.view(n_way, per_way, -1, 2)
         else:
-            if n_way:
-                loc = loc.view(n_way, per_way, -1, 4)
-                conf = conf.view(n_way, per_way, -1, self.num_classes)
-                obj = obj.view(n_way, per_way, -1, 2)
-            else:
-                loc = loc.view(loc.size(0), -1, 4)
-                conf = conf.view(conf.size(0), -1, self.num_classes)
-                obj = obj.view(obj.size(0), -1, 2)
+            loc = loc.view(num, -1, 4)
+            conf = conf.view(num, -1, self.num_classes if phase == 'init' else 20)
+            obj = obj.view(num, -1, 2)
 
-            output = (loc, conf, obj)
+        output = (loc, conf, obj)
 
         return output
 
@@ -262,6 +272,11 @@ class RFBNet(nn.Module):
         else:
             print('Sorry only .pth and .pkl files supported.')
 
+    def normalize(self):
+        # self.denselayer1.fc.weight.data = self.denselayer1.fc.weight / torch.norm(self.denselayer1.fc.weight, dim=1, keepdim=True)
+        # self.denselayer2.fc.weight.data = self.denselayer2.fc.weight / torch.norm(self.denselayer2.fc.weight, dim=1, keepdim=True)
+        # self.denselayer3.fc.weight.data = self.denselayer3.fc.weight / torch.norm(self.denselayer3.fc.weight, dim=1, keepdim=True)
+        self.imprinted_matrix.weight.data = self.imprinted_matrix.weight / torch.norm(self.imprinted_matrix.weight, dim=1, keepdim=True)
 
 # This function is derived from torchvision VGG make_layers()
 # https://github.com/pytorch/vision/blob/master/torchvision/models/vgg.py

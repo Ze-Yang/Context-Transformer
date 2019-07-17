@@ -1,24 +1,19 @@
 from __future__ import print_function
-import sys
 import os
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 import torch.nn.init as init
 import argparse
 import torch.utils.data as data
 import numpy as np
-from data import VOCroot, COCOroot, VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, BaseTransform, preproc, EpisodicBatchSampler
-from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
-from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
+from data import AnnotationTransform, VOCDetection, detection_collate, VOC_CLASSES, VOCroot, COCOroot, \
+    VOC_300, VOC_512, COCO_300, COCO_512, COCO_mobile_300, BaseTransform, preproc, EpisodicBatchSampler
+from layers.modules.multibox_loss_combined import MultiBoxLoss_combined
 from layers.functions import PriorBox
 from utils.box_utils import match
 import time
-from data.voc0712_meta import VOC_CLASSES
-from data.coco_voc_form import COCO_CLASSES
 from logger import Logger
-# torch.cuda.set_device(7)
 # np.random.seed(100)
 
 parser = argparse.ArgumentParser(
@@ -72,7 +67,7 @@ parser.add_argument('--save_folder', default='./weights/',
 args = parser.parse_args()
 
 if not os.path.exists(args.save_folder):
-    os.mkdir(args.save_folder)
+    os.makedirs(args.save_folder)
 
 if args.dataset == 'VOC':
     train_sets = [('2007', 'trainval'), ('2012', 'trainval')]
@@ -83,7 +78,7 @@ else:
     cfg = (COCO_300, COCO_512)[args.size == '512']
 
 if args.version == 'RFB_vgg':
-    from models.RFB_Net_vgg_imprinted import build_net
+    from models.RFB_Net_vgg_CAU import build_net
 elif args.version == 'RFB_E_vgg':
     from models.RFB_Net_E_vgg import build_net
 elif args.version == 'RFB_mobile':
@@ -296,14 +291,14 @@ def train(net):
                     loc_loss / epoch_size, conf_loss / epoch_size, obj_loss / epoch_size)
                       )
                 if epoch % 2 == 0:
-                    torch.save(net.state_dict(), args.save_folder + args.version + '_' + args.dataset + '_imprinted_epoches_' +
+                    torch.save(net.state_dict(), args.save_folder + args.version + '_' + args.dataset + '_CAU_epoches_' +
                                repr(epoch) + '.pth')
             loc_loss = 0
             conf_loss = 0
             obj_loss = 0
 
             epoch += 1
-            scheduler.step()  # 等价于lr = args.lr * (gamma ** (step_index))
+            scheduler.step()  # equal to lr = args.lr * (gamma ** (step_index))
             lr = scheduler.get_lr()
 
         # load train data
@@ -351,7 +346,7 @@ def train(net):
 
         first_or_not = 0
     torch.save(net.state_dict(), args.save_folder +
-               'Final_' + args.version + '_' + args.dataset + '_imprinted.pth')
+               'Final_' + args.version + '_' + args.dataset + '_CAU.pth')
 
 
 def vis_picture(imgs, targets):
@@ -417,7 +412,7 @@ def adjust_learning_rate(optimizer, iteration, epoch_size):
     # Adapted from PyTorch Imagenet example:
     # https://github.com/pytorch/examples/blob/master/imagenet/main.py
     """
-    lr = 1e-6 + (args.lr - 1e-6) * iteration / (epoch_size * 5)  # 前5个epoch有warm up的过程
+    lr = 1e-6 + (args.lr - 1e-6) * iteration / (epoch_size * 5)  # warmup
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr

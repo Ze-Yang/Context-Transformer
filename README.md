@@ -1,6 +1,6 @@
-# Receptive Field Block Net for Accurate and Fast Object Detection
+# Contextual Affinity Understanding for Low Shot Object Detection
 
-By Songtao Liu, Di Huang, Yunhong Wang
+By anonymous authors.
 
 ### Introduction
 Inspired by the structure of Receptive Fields (RFs) in human visual systems, we propose a novel RF Block (RFB) module, which takes the relationship between the size and eccentricity of RFs into account, to enhance the discriminability and robustness of features. We further  assemble the RFB module to the top of SSD with a lightweight CNN model, constructing the RFB Net detector. You can use the code to train/evaluate the RFB Net for object detection. For more details, please refer to our [ECCV paper](https://eccv2018.org/openaccess/content_ECCV_2018/papers/Songtao_Liu_Receptive_Field_Block_ECCV_2018_paper.pdf). 

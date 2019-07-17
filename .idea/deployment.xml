@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="zeyang@172.20.36.47:22" showAutoUploadSettingsWarning="false">
+  <component name="PublishConfigData" autoUpload="Always" serverName="pqzhuang@172.20.36.229:22" showAutoUploadSettingsWarning="false">
     <serverData>
+      <paths name="pqzhuang@172.20.36.229:22">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/pqzhuang/CAUNet" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="xychen@172.20.36.224:22">
         <serverdata>
           <mappings>
@@ -41,7 +48,7 @@
       <paths name="zeyang@172.20.36.47:22">
         <serverdata>
           <mappings>
-            <mapping deploy="/media/sde/zeyang/RFBNet" local="$PROJECT_DIR$" />
+            <mapping deploy="/media/sde/zeyang/CAUNet" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

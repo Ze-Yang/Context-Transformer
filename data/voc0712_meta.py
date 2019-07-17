@@ -210,7 +210,6 @@ class VOCDetection(data.Dataset):
                 for line in open(os.path.join(rootpath, 'ImageSets', 'Main', name + '.txt')):
                     self.ids.append((rootpath, line.strip()))
 
-
     def __getitem__(self, index):
         # np.random.seed(100)
         indexes = self.split_index[index] + \
@@ -443,6 +442,7 @@ class VOCDetection(data.Dataset):
         print('-- Thanks, The Management')
         print('--------------------------------------------------------------')
 
+
 def detection_collate(batch, phase):
     """Custom collate fn for dealing with batches of images that have a different
     number of associated object annotations (bounding boxes).
@@ -475,6 +475,7 @@ def detection_collate(batch, phase):
     else:
         print('detection_collate phase is not applicable!')
         exit(0)
+
 
 class EpisodicBatchSampler(data.Sampler):
     def __init__(self, n_classes, n_way, n_episodes, phase='train'):

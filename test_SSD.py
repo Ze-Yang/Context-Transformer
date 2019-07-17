@@ -7,19 +7,14 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import numpy as np
-from data import VOC_AnnotationTransform, COCO_AnnotationTransform, COCODetection, VOCDetection, BaseTransform, VOC_SSD_300, COCO_SSD_300,\
+from data import AnnotationTransform, COCO_AnnotationTransform, COCODetection, VOCDetection, BaseTransform, VOC_SSD_300, COCO_SSD_300,\
     COCO_mobile_300, EpisodicBatchSampler, detection_collate, VOCroot, COCOroot, preproc
-import torch.utils.data as data
 from layers.functions import Detect,PriorBox
 from utils.nms_wrapper import nms
 from utils.timer import Timer
-from utils.box_utils import match
-from data.voc0712_meta import VOC_CLASSES
-from data.coco_voc_form import COCO_CLASSES
 from time import time
 import matplotlib.pyplot as plt
 from matplotlib import offsetbox
-
 
 parser = argparse.ArgumentParser(description='Receptive Field Block Net')
 
@@ -54,7 +49,7 @@ else:
 
 if args.version == 'SSD_vgg':
     if args.method == 'CAU':
-        from models.SSD_Net_vgg_imprinted import build_net
+        from models.SSD_Net_vgg_CAU import build_net
     elif args.method == 'TF':
         from models.SSD_Net_vgg import build_net
 else:

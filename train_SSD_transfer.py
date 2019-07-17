@@ -8,7 +8,7 @@ import argparse
 import torch.utils.data as data
 from data import VOCroot, COCOroot, VOC_SSD_300, COCO_SSD_300, BaseTransform, preproc, EpisodicBatchSampler
 from data.voc0712 import AnnotationTransform, VOCDetection, detection_collate
-from layers.modules.multibox_loss_combined_imprinted import MultiBoxLoss_combined
+from layers.modules.multibox_loss_combined import MultiBoxLoss_combined
 from layers.functions import PriorBox
 import time
 from logger import Logger
