@@ -34,7 +34,7 @@ parser.add_argument('--n_shot_task', type=int, default=5,
                     help="number of support examples per class on target domain")
 parser.add_argument('--support_episodes', type=int, default=50,
                     help="number of center calculation per support image (default: 100)")
-parser.add_argument('--train_episodes', type=int, default=100,
+parser.add_argument('--train_episodes', type=int, default=50,
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
@@ -94,7 +94,7 @@ num_classes = 21
 overlap_threshold = 0.5
 feature_dim = 60
 n_way = 20
-num = args.batch_size
+num = min(args.batch_size, args.n_shot_task*20)
 
 net = build_net('train', img_dim, feature_dim)
 print(net)
@@ -209,7 +209,7 @@ def train(net):
             return
 
         print('Initializing the imprinted matrix...')
-        sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
+        sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=num,
                                        n_episodes=args.support_episodes, phase='train')
         batch_iterator = iter(data.DataLoader(dataset, batch_sampler=sampler, num_workers=args.num_workers,
                                               collate_fn=detection_collate))
@@ -276,7 +276,7 @@ def train(net):
 
     first_or_not = 1
 
-    sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
+    sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=num,
                                    n_episodes=args.train_episodes, phase='train')
 
     for iteration in range(start_iter, max_iter):
