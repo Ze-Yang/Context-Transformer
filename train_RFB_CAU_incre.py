@@ -35,13 +35,13 @@ parser.add_argument('--n_shot_task', type=int, default=5,
                     help="number of support examples per class on target domain")
 parser.add_argument('--support_episodes', type=int, default=50,
                     help="number of center calculation per support image (default: 100)")
-parser.add_argument('--train_episodes', type=int, default=100,
+parser.add_argument('--train_episodes', type=int, default=50,
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
 parser.add_argument('--cuda', default=True,
                     type=bool, help='Use cuda to train model')
-parser.add_argument('--ngpu', default=1, type=int, help='gpus')
+parser.add_argument('--ngpu', default=4, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate',
                     default=4e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
@@ -49,11 +49,11 @@ parser.add_argument(
     '--resume_net', default=None, help='resume net for retraining')
 parser.add_argument('--resume_epoch', default=0,
                     type=int, help='resume iter for retraining')
-parser.add_argument('-max', '--max_epoch', default=20,
+parser.add_argument('-max', '--max_epoch', default=10,
                     type=int, help='max epoch for retraining')
 parser.add_argument('--mixup', action='store_true',
                         help='whether to enable mixup.')
-parser.add_argument('--no_mixup_epochs', type=int, default=12,
+parser.add_argument('--no_mixup_epochs', type=int, default=6,
                         help='Disable mixup training if enabled in the last N epochs.')
 parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
@@ -66,7 +66,7 @@ parser.add_argument('--save_folder', default='./weights/',
 args = parser.parse_args()
 
 if not os.path.exists(args.save_folder):
-    os.mkdir(args.save_folder)
+    os.makedirs(args.save_folder)
 
 if args.dataset == 'VOC':
     # train_sets = [('2007', 'trainval'), ('2012', 'trainval')]
@@ -302,7 +302,7 @@ def train(net):
     epoch_size = args.train_episodes
     max_iter = args.max_epoch * epoch_size
 
-    milestones_VOC = [12, 16]
+    milestones_VOC = [6]
     milestones_COCO = [30, 60, 90]
     milestones = (milestones_VOC, milestones_COCO)[args.dataset == 'COCO']
 
@@ -316,7 +316,7 @@ def train(net):
 
     first_or_not = 1
 
-    sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=args.batch_size,
+    sampler = EpisodicBatchSampler(n_classes=len(dataset), n_way=min(args.batch_size, args.n_shot_task*20),
                                    n_episodes=args.train_episodes, phase='train')
 
     for iteration in range(start_iter, max_iter):
@@ -331,8 +331,8 @@ def train(net):
                     loc_loss / epoch_size, conf_loss / epoch_size, obj_loss / epoch_size)
                       )
                 if epoch % 2 == 0:
-                    torch.save(net.state_dict(), args.save_folder + args.version + '_' + args.dataset + '_imprinted_epoches_' +
-                               repr(epoch) + '.pth')
+                    torch.save(net.state_dict(), args.save_folder + args.version + '_' + args.dataset +
+                               '_CAU_incre_epoches_' + repr(epoch) + '.pth')
             loc_loss = 0
             conf_loss = 0
             obj_loss = 0
@@ -386,7 +386,7 @@ def train(net):
 
         first_or_not = 0
     torch.save(net.state_dict(), args.save_folder +
-               'Final_' + args.version + '_' + args.dataset + '_imprinted.pth')
+               'Final_' + args.version + '_' + args.dataset + '_CAU_incre.pth')
 
 
 def vis_picture(imgs, targets):
