@@ -35,7 +35,7 @@ parser.add_argument('--n_shot_task', type=int, default=5,
                     help="number of support examples per class on target domain")
 parser.add_argument('--support_episodes', type=int, default=50,
                     help="number of center calculation per support image (default: 100)")
-parser.add_argument('--train_episodes', type=int, default=50,
+parser.add_argument('--train_episodes', type=int, default=100,
                     help="number of train episodes per epoch (default: 100)")
 parser.add_argument('--num_workers', default=4,
                     type=int, help='Number of workers used in dataloading')
@@ -49,11 +49,11 @@ parser.add_argument(
     '--resume_net', default=None, help='resume net for retraining')
 parser.add_argument('--resume_epoch', default=0,
                     type=int, help='resume iter for retraining')
-parser.add_argument('-max', '--max_epoch', default=10,
+parser.add_argument('-max', '--max_epoch', default=20,
                     type=int, help='max epoch for retraining')
 parser.add_argument('--mixup', action='store_true',
                         help='whether to enable mixup.')
-parser.add_argument('--no_mixup_epochs', type=int, default=6,
+parser.add_argument('--no_mixup_epochs', type=int, default=12,
                         help='Disable mixup training if enabled in the last N epochs.')
 parser.add_argument('--weight_decay', default=5e-4,
                     type=float, help='Weight decay for SGD')
@@ -302,7 +302,7 @@ def train(net):
     epoch_size = args.train_episodes
     max_iter = args.max_epoch * epoch_size
 
-    milestones_VOC = [6]
+    milestones_VOC = [12, 16]
     milestones_COCO = [30, 60, 90]
     milestones = (milestones_VOC, milestones_COCO)[args.dataset == 'COCO']
 
