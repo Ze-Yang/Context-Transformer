@@ -5,23 +5,21 @@ By anonymous authors.
 ### Introduction
 Inspired by the structure of Receptive Fields (RFs) in human visual systems, we propose a novel RF Block (RFB) module, which takes the relationship between the size and eccentricity of RFs into account, to enhance the discriminability and robustness of features. We further  assemble the RFB module to the top of SSD with a lightweight CNN model, constructing the RFB Net detector. You can use the code to train/evaluate the RFB Net for object detection. For more details, please refer to our [ECCV paper](https://eccv2018.org/openaccess/content_ECCV_2018/papers/Songtao_Liu_Receptive_Field_Block_ECCV_2018_paper.pdf). 
 
-<img align="right" src="https://github.com/ruinmessi/RFBNet/blob/master/doc/RFB.png">
+<img align="right" src="https://github.com/Ze-Yang/CAUNet/blob/master/doc/CAU.png">
 
 &nbsp;
 &nbsp;
 
-### VOC2007 Test
-| System |  *mAP* | **FPS** (Titan X Maxwell) |
+### COCO60 to VOC20 results (Transfer Setting)
+| Method |  *1shot* | *5shot* |
 |:-------|:-----:|:-------:|
-| [Faster R-CNN (VGG16)](https://github.com/ShaoqingRen/faster_rcnn) | 73.2 | 7 | 
-| [YOLOv2 (Darknet-19)](http://pjreddie.com/darknet/yolo/) | 78.6 | 40 | 
-| [R-FCN (ResNet-101)](https://github.com/daijifeng001/R-FCN)| 80.5| 9 |
-| [SSD300* (VGG16)](https://github.com/weiliu89/caffe/tree/ssd) | 77.2 | 46 |
-| [SSD512* (VGG16)](https://github.com/weiliu89/caffe/tree/ssd) | 79.8 | 19 |
-| RFBNet300 (VGG16) | **80.7** |**83** | 
-| RFBNet512 (VGG16) | **82.2** | **38** | 
+| [Prototype](https://github.com/ShaoqingRen/faster_rcnn) | 22.8 | 39.8 |
+| [Imprinted](http://pjreddie.com/darknet/yolo/) | 24.5 | 40.9 |
+| [Non-local](https://github.com/daijifeng001/R-FCN)| 25.2 | 41.0 |
+| our CAU-Net | **27.0** | **43.8** |
 
-### COCO 
+
+### VOC15 to VOC20 (Incremental Setting)
 | System |  *test-dev mAP* | **Time** (Titan X Maxwell) |
 |:-------|:-----:|:-------:|
 | [Faster R-CNN++ (ResNet-101)](https://github.com/KaimingHe/deep-residual-networks) | 34.9 | 3.36s | 
@@ -60,26 +58,26 @@ Please cite our paper in your publications if it helps your research:
 5. [Models](#models)
 
 ## Installation
-- Install [PyTorch-0.4.0](http://pytorch.org/) by selecting your environment on the website and running the appropriate command.
-- Clone this repository. This repository is mainly based on [ssd.pytorch](https://github.com/amdegroot/ssd.pytorch) and [Chainer-ssd](https://github.com/Hakuyume/chainer-ssd), a huge thank to them.
-  * Note: We currently only support PyTorch-0.4.0 and Python 3+.
-- Compile the nms and coco tools:
-```Shell
-./make.sh
+- Install [Anaconda3-5.2.0](https://repo.anaconda.com/archive/Anaconda3-5.2.0-Linux-x86_64.sh).
+- Clone this repository. This repository is mainly based on [RFBNet](https://github.com/ruinmessi/RFBNet), many thanks to them.
+  * Note: We currently only support PyTorch-1.0.1 and Python 3+.
+- Run this command to build up the environment.
+``` 
+conda env create -n CAU -f env.yaml
 ```
+
+- Compile the nms and coco tools:
+
+```Shell
+sh make.sh
+```
+
 *Note*: Check you GPU architecture support in utils/build.py, line 131. Default is:
 ``` 
-'nvcc': ['-arch=sm_52',
-```
-- Then download the dataset by following the [instructions](#download-voc2007-trainval--test) below and install opencv. 
-```Shell
-conda install opencv
-```
-Note: For training, we currently  support [VOC](http://host.robots.ox.ac.uk/pascal/VOC/) and [COCO](http://mscoco.org/). 
+'nvcc': ['-arch=sm_61',
+``` 
 
 ## Datasets
-To make things easy, we provide simple VOC and COCO dataset loader that inherits `torch.utils.data.Dataset` making it fully compatible with the `torchvision.datasets` [API](http://pytorch.org/docs/torchvision/datasets.html).
-
 ### VOC Dataset
 ##### Download VOC2007 trainval & test
 
@@ -94,55 +92,40 @@ sh data/scripts/VOC2007.sh # <directory>
 # specify a directory for dataset to be downloaded into, else default is ~/data/
 sh data/scripts/VOC2012.sh # <directory>
 ```
-### COCO Dataset
-Install the MS COCO dataset at /path/to/coco from [official website](http://mscoco.org/), default is ~/data/COCO. Following the [instructions](https://github.com/rbgirshick/py-faster-rcnn/blob/77b773655505599b94fd8f3f9928dbf1a9a776c7/data/README.md) to prepare *minival2014* and *valminusminival2014* annotations. All label files (.json) should be under the COCO/annotations/ folder. It should have this basic structure
-```Shell
-$COCO/
-$COCO/cache/
-$COCO/annotations/
-$COCO/images/
-$COCO/images/test2015/
-$COCO/images/train2014/
-$COCO/images/val2014/
-```
-*UPDATE*: The current COCO dataset has released new *train2017* and *val2017* sets which are just new splits of the same image sets. 
 
 ## Training
 - First download the fc-reduced [VGG-16](https://arxiv.org/abs/1409.1556) PyTorch base network weights at:    https://s3.amazonaws.com/amdegroot-models/vgg16_reducedfc.pth
-or from our [BaiduYun Driver](https://pan.baidu.com/s/1jIP86jW) 
-- MobileNet pre-trained basenet is ported from [MobileNet-Caffe](https://github.com/shicai/MobileNet-Caffe), which achieves slightly better accuracy rates than the original one reported in the [paper](https://arxiv.org/abs/1704.04861), weight file is available at: https://drive.google.com/open?id=13aZSApybBDjzfGIdqN1INBlPsddxCK14 or [BaiduYun Driver](https://pan.baidu.com/s/1dFKZhdv).
+or from [BaiduYun Driver](https://pan.baidu.com/s/1jIP86jW) 
 
-- By default, we assume you have downloaded the file in the `RFBNet/weights` dir:
+- Download the [RFBNet models](https://pan.baidu.com/s/1aW73KRm3anrX0ulcadQZMg), which are pretrained on COCO60, VOC15_split1, VOC15_split2, VOC15_split3 dataset.
+
+By default, we assume you have downloaded the files in the `CAUNet/weights` dir.
+
+### Transfer Setting (COCO60 to VOC20)
+- To train CAUNet under transfer setting, use the `train_RFB_CAU.py` script (or `train_SSD_CAU.py` if you want to use SSD framework), simply specify the parameters listed in `train_RFB_CAU.py` as a flag or manually change them.
 ```Shell
-mkdir weights
-cd weights
-wget https://s3.amazonaws.com/amdegroot-models/vgg16_reducedfc.pth
+python train_RFB_CAU.py --n_shot_task 5 --resume_net weights/RFB_COCO60_pretrain.pth --save_folder weights/VOC_CAU_5shot/
 ```
 
-- To train RFBNet using the train script simply specify the parameters listed in `train_RFB.py` as a flag or manually change them.
+### Incremental Setting (VOC15 to VOC20)
+- To train CAUNet under incremental setting, use the `train_RFB_CAU_incre.py` script, simply specify the parameters listed in `train_RFB_CAU_incre.py` as a flag or manually change them.
 ```Shell
-python train_RFB.py -d VOC -v RFB_vgg -s 300 
+python train_RFB_CAU_incre.py --n_shot_task 5 --resume_net weights/split1_pretrain.pth --save_folder weights/VOC_split1_5shot/
 ```
-- Note:
-  * -d: choose datasets, VOC or COCO.
-  * -v: choose backbone version, RFB_VGG, RFB_E_VGG or RFB_mobile.
-  * -s: image size, 300 or 512.
-  * You can pick-up training from a checkpoint by specifying the path as one of the training parameters (again, see `train_RFB.py` for options)
-  * If you want to reproduce the results in the paper, the VOC model should be trained about 240 epoches while the COCO version need 130 epoches.
-  
+
+Note:
+  * --n_shot_task: specify n shot task (n=1, 2, 3, 5 ,10)
+  * If you want to reproduce the results in the paper, feel free to reset the HEAD to corresponding commit, e.g., reset the HEAD to `CAU_5shot` for 5 shot task, all the training settings will be ready for you.
+
 ## Evaluation
-To evaluate a trained network:
-
+- To evaluate a trained network under transfer setting:
 ```Shell
-python test_RFB.py -d VOC -v RFB_vgg -s 300 --trained_model /path/to/model/weights
+python test_RFB.py --method CAU -m weights/VOC_CAU_5shot/Final_RFB_vgg_VOC_CAU.pth --save_folder eval/VOC_CAU_5shot/40ep/
 ```
-By default, it will directly output the mAP results on VOC2007 *test* or COCO *minival2014*. For VOC2012 *test* and COCO *test-dev* results, you can manually change the datasets in the `test_RFB.py` file, then save the detection results and submitted to the server. 
 
-## Models
-
-* 07+12 [RFB_Net300](https://drive.google.com/open?id=1apPyT3IkNwKhwuYyp432IJrTd0QHGbIN), [BaiduYun Driver](https://pan.baidu.com/s/1xOp3_FDk49YlJ-6C-xQfHw)
-* COCO [RFB_Net300](https://pan.baidu.com/s/1vL_oNwhj0ksK593nApqDLw)
-* COCO [RFB_Net512_E](https://drive.google.com/open?id=1pHDc6Xg9im3affOr7xaimXaRNOHtbaPM), [BaiduYun Driver](https://pan.baidu.com/s/1o8dxrom)
-* COCO [RFB_Mobile Net300](https://drive.google.com/open?id=1vmbTWWgeMN_qKVWOeDfl1EN9c7yHPmOe), [BaiduYun Driver](https://pan.baidu.com/s/1bp4ik1L)
-
+- To evaluate a trained network under incremental setting:
+```Shell
+python test_RFB.py --method CAU_incre -m weights/VOC_split1_5shot/RFB_vgg_VOC_CAU_incre_epoches_4.pth --save_folder eval/VOC_split1_5shot/4ep/
+```
+By default, it will directly output the mAP results on VOC2007 *test*.
 
