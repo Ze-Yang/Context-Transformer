@@ -1,131 +1,212 @@
-# Contextual Affinity Understanding for Low Shot Object Detection
+# Context-Transformer: Tackling Object Confusion for Few-Shot Detection
 
-By anonymous authors.
+By Ze Yang, Yali Wang, Xianyu Chen, Jianzhuang Liu, Yu Qiao.
 
-### Introduction
-Inspired by the structure of Receptive Fields (RFs) in human visual systems, we propose a novel RF Block (RFB) module, which takes the relationship between the size and eccentricity of RFs into account, to enhance the discriminability and robustness of features. We further  assemble the RFB module to the top of SSD with a lightweight CNN model, constructing the RFB Net detector. You can use the code to train/evaluate the RFB Net for object detection. For more details, please refer to our [ECCV paper](https://eccv2018.org/openaccess/content_ECCV_2018/papers/Songtao_Liu_Receptive_Field_Block_ECCV_2018_paper.pdf). 
 
-<img align="right" src="https://github.com/Ze-Yang/CAUNet/blob/master/doc/CAU.png">
 
-&nbsp;
-&nbsp;
+## Introduction
+To tackle the object confusion problem in few-shot detection, we propose a novel Context-Transformer within a concise deep transfer framework. Specifically, Context-Transformer can effectively leverage source-domain object knowledge as guidance, and automatically formulate relational context clues to enhance the detector's generalization capcity to the target domain.
+It can be flexibly embedded in the popular SSD-style detectors, which makes it a plug-and-play module for end-to-end few-shot learning. For more details, please refer to our [AAAI paper](https://arxiv.org/pdf/2003.07304.pdf).
 
-### COCO60 to VOC20 results (Transfer Setting)
+<p align=center><img width="80%" src="doc/Motivation.png"/></p>
+
+
+### Transfer Setting COCO60 to VOC20 (Novel Class *mAP*)
 | Method |  *1shot* | *5shot* |
 |:-------|:-----:|:-------:|
 | [Prototype](https://github.com/ShaoqingRen/faster_rcnn) | 22.8 | 39.8 |
 | [Imprinted](http://pjreddie.com/darknet/yolo/) | 24.5 | 40.9 |
 | [Non-local](https://github.com/daijifeng001/R-FCN)| 25.2 | 41.0 |
-| our CAU-Net | **27.0** | **43.8** |
+| Ours | **27.0** | **43.8** |
 
 
-### VOC15 to VOC20 (Incremental Setting)
-| System |  *test-dev mAP* | **Time** (Titan X Maxwell) |
-|:-------|:-----:|:-------:|
-| [Faster R-CNN++ (ResNet-101)](https://github.com/KaimingHe/deep-residual-networks) | 34.9 | 3.36s | 
-| [YOLOv2 (Darknet-19)](http://pjreddie.com/darknet/yolo/) | 21.6 | 25ms| 
-| [SSD300* (VGG16)](https://github.com/weiliu89/caffe/tree/ssd) | 25.1 | 22ms |
-| [SSD512* (VGG16)](https://github.com/weiliu89/caffe/tree/ssd) | 28.8 | 53ms |
-| [RetinaNet500 (ResNet-101-FPN)](https://arxiv.org/pdf/1708.02002.pdf) | 34.4| 90ms|
-| RFBNet300 (VGG16) | **30.3** |**15ms** | 
-| RFBNet512 (VGG16) | **33.8** | **30ms** |
-| RFBNet512-E (VGG16) | **34.4** | **33ms** |  
+### Incremental Setting VOC15 to VOC20 (Novel Class *mAP*)
+| Method (*1-shot*) | *Split1* | *Split2* | *Split3* |
+|:-------|:-------:|:-----:|:-------:|
+| [Shmelkov2017](https://arxiv.org/pdf/1708.06977.pdf) | 23.9 | 19.2 | 21.4 |
+| [Kang2019](https://arxiv.org/pdf/1812.01866.pdf) | 14.8 | 15.7 | 19.2 |
+| ours | **39.8** | **32.5** | **34.0** |
+
+| Method (*5-shot*) | *Split1* | *Split2* | *Split3* |
+|:-------|:-------:|:-----:|:-------:|
+| [Shmelkov2017](https://arxiv.org/pdf/1708.06977.pdf) | 38.8 | 32.5 | 31.8 |
+| [Kang2019](https://arxiv.org/pdf/1812.01866.pdf) | 33.9 | 30.1 | 40.6 |
+| ours | **44.2** | **36.3** | **40.8** |
 
 
-### MobileNet
-|System |COCO *minival mAP*| **\#parameters**|
-|:-------|:-----:|:-------:|
-|[SSD MobileNet](https://arxiv.org/abs/1704.04861)| 19.3| 6.8M|
-|RFB MobileNet| 20.7 | 7.4M|
+### License
+
+Context-Transformer is released under the MIT License (refer to the LICENSE file for details).
 
 
-### Citing RFB Net
-Please cite our paper in your publications if it helps your research:
+### Citing Context-Transformer
 
-    @InProceedings{Liu_2018_ECCV,
-    author = {Liu, Songtao and Huang, Di and Wang, andYunhong},
-    title = {Receptive Field Block Net for Accurate and Fast Object Detection},
-    booktitle = {The European Conference on Computer Vision (ECCV)},
-    month = {September},
-    year = {2018}
-    }
+If you find Context-Transformer useful in your research, please consider citing:
+```BibTeX
+@misc{yang2020contexttransformer,
+    title={Context-Transformer: Tackling Object Confusion for Few-Shot Detection},
+    author={Ze Yang and Yali Wang and Xianyu Chen and Jianzhuang Liu and Yu Qiao},
+    year={2020},
+    eprint={2003.07304},
+    archivePrefix={arXiv},
+    primaryClass={cs.CV}
+}
+```
+&nbsp;
 
-### Contents
+## Contents
 1. [Installation](#installation)
 2. [Datasets](#datasets)
 3. [Training](#training)
 4. [Evaluation](#evaluation)
-5. [Models](#models)
 
 ## Installation
-- Install [Anaconda3-5.2.0](https://repo.anaconda.com/archive/Anaconda3-5.2.0-Linux-x86_64.sh).
-- Clone this repository. This repository is mainly based on [RFBNet](https://github.com/ruinmessi/RFBNet), many thanks to them.
-  * Note: We currently only support PyTorch-1.0.1 and Python 3+.
-- Run this command to build up the environment.
-``` 
-conda env create -n CAU -f env.yaml
-```
+- Clone this repository. This repository is mainly based on [RFBNet](https://github.com/ruinmessi/RFBNet) and [Detectron2](https://github.com/facebookresearch/detectron2), many thanks to them.
+- Install [anaconda](https://www.anaconda.com/distribution/) and requirements:
+    - python 3.6
+    - PyTorch 1.4.0
+    - CUDA 10.0
+    - gcc 5.4
+    - cython
+    - opencv
+    - matplotlib
+    - tabulate
+    - termcolor
+    - tensorboard
+
+        You can setup the entire environment simply using `conda`:
+
+        ```sh
+        conda create -n CT python=3.6 && conda activate CT
+        conda install pytorch torchvision cudatoolkit=10.0 -c pytorch
+        conda install cython opencv matplotlib tabulate termcolor tensorboard
+        ```
 
 - Compile the nms and coco tools:
-
 ```Shell
 sh make.sh
 ```
 
-*Note*: Check you GPU architecture support in utils/build.py, line 131. Default is:
+Note: 
+- Check your GPU architecture support in utils/build.py, line 131. Default is:
 ``` 
 'nvcc': ['-arch=sm_61',
 ``` 
+- Ensure that the cuda environment is integrally installed, including compiler, tools and libraries. Plus, make sure the cudatoolkit version in the conda environment matches with the one you compile with. Check about that using `nvcc -V` and `conda list | grep cudatoolkit`, the output version should be the same.
+- We have test the code on PyTorch-1.4.0 and Python 3.6. It might be able to run on other versions but with no guarantee.
 
 ## Datasets
 ### VOC Dataset
-##### Download VOC2007 trainval & test
+#### Download VOC2007 trainval & test
 
 ```Shell
 # specify a directory for dataset to be downloaded into, else default is ~/data/
 sh data/scripts/VOC2007.sh # <directory>
 ```
 
-##### Download VOC2012 trainval
+#### Download VOC2012 trainval
 
 ```Shell
 # specify a directory for dataset to be downloaded into, else default is ~/data/
 sh data/scripts/VOC2012.sh # <directory>
 ```
+#### Create symlink for the VOC dataset:
+```
+ln -s /path/to/VOCdevkit data/VOCdevkit
+```
+#### Image shots and splits preparation
+Move the Main2007.zip and Main2012.zip under `data/` folder to `data/VOCdevkit/VOC2007/ImageSets/` and `data/VOCdevkit/VOC2012/ImageSets/` respectively, and unzip them. Make sure that the .txt files contained in the zip file are under corresponding `path/to/Main/` folder.
+
+### COCO Dataset
+#### Download COCO benchmark
+Download the MS COCO dataset from [official website](http://mscoco.org/) to `data/COCO/` (or make a symlink `ln -s /path/to/coco data/COCO`). All annotation files (.json) should be placed under the `COCO/annotations/` folder. It should have this basic structure
+```Shell
+$COCO/
+$COCO/cache/
+$COCO/annotations/
+$COCO/images/
+$COCO/images/train2014/
+$COCO/images/val2014/
+```
+Note: The current COCO dataset has released new *train2017* and *val2017* sets which are just new splits of the same image sets. 
+#### Image splits preparation
+Run the following command to obtain nonvoc/voc split annotation files (.json): 
+```
+python data/split_coco_dataset_voc_nonvoc.py
+```
 
 ## Training
-- First download the fc-reduced [VGG-16](https://arxiv.org/abs/1409.1556) PyTorch base network weights at:    https://s3.amazonaws.com/amdegroot-models/vgg16_reducedfc.pth
-or from [BaiduYun Driver](https://pan.baidu.com/s/1jIP86jW) 
+First download the fc-reduced [VGG-16](https://arxiv.org/abs/1409.1556) PyTorch base network weights at https://s3.amazonaws.com/amdegroot-models/vgg16_reducedfc.pth
+or from [BaiduYun Driver](https://pan.baidu.com/s/1jIP86jW), and place it under the directory `weights/`.
 
-- Download the [RFBNet models](https://pan.baidu.com/s/1aW73KRm3anrX0ulcadQZMg), which are pretrained on COCO60, VOC15_split1, VOC15_split2, VOC15_split3 dataset.
-
-By default, we assume you have downloaded the files in the `CAUNet/weights` dir.
-
-### Transfer Setting (COCO60 to VOC20)
-- To train CAUNet under transfer setting, use the `train_RFB_CAU.py` script (or `train_SSD_CAU.py` if you want to use SSD framework), simply specify the parameters listed in `train_RFB_CAU.py` as a flag or manually change them.
+### Phase 1
+#### Transfer Setting
+To pretrain RFBNet on source domain dataset COCO60:
 ```Shell
-python train_RFB_CAU.py --n_shot_task 5 --resume_net weights/RFB_COCO60_pretrain.pth --save_folder weights/VOC_CAU_5shot/
+python train.py --save-folder weights/COCO60_pretrain -d COCO -p 1
 ```
 
-### Incremental Setting (VOC15 to VOC20)
-- To train CAUNet under incremental setting, use the `train_RFB_CAU_incre.py` script, simply specify the parameters listed in `train_RFB_CAU_incre.py` as a flag or manually change them.
+#### Incremental Setting
+To pretrain RFBNet on VOC split1 (simply change `--split` for other splits):
 ```Shell
-python train_RFB_CAU_incre.py --n_shot_task 5 --resume_net weights/split1_pretrain.pth --save_folder weights/VOC_split1_5shot/
+python train.py --save-folder weights/VOC_split1_pretrain -d VOC -p 1 -max 50000 --steps 30000 40000 --checkpoint-period 4000 --warmup-iter 1000 --setting incre --split 1
 ```
-
 Note:
-  * --n_shot_task: specify n shot task (n=1, 2, 3, 5 ,10)
-  * If you want to reproduce the results in the paper, feel free to reset the HEAD to corresponding commit, e.g., reset the HEAD to `CAU_5shot` for 5 shot task, all the training settings will be ready for you.
+- To ease your reproduce, feel free to download the above pretrained [RFBNet models](https://pan.baidu.com/s/1aW73KRm3anrX0ulcadQZMg) directly.
+
+### Phase 2
+#### Transfer Setting
+To finetune on VOC dataset *(1 shot)*:
+```Shell
+python train.py --load-file weights/COCO60_pretrain/model_final.pth --save-folder weights/fewshot/transfer/VOC_1shot -d VOC -p 2 --shot 1 --method ours -max 2000 --steps 1500 1750 --checkpoint-period 200 --warmup-iter 0 --no-mixup-iter 750 -b 20
+```
+To finetune on VOC dataset *(5 shot)*:
+```Shell
+python train.py --load-file weights/COCO60_pretrain/model_final.pth --save-folder weights/fewshot/transfer/VOC_5shot -d VOC -p 2 --shot 5 --method ours -max 4000 --steps 3000 3500 --checkpoint-period 500 --warmup-iter 0 --no-mixup-iter 1500
+```
+
+
+#### Incremental Setting
+To finetune on VOC dataset for split1 setting *(1 shot)*:
+```Shell
+python train.py -d VOC --split 1 --setting incre -p 2 -m ours --shot 1 --save-folder weights/fewshot/incre/VOC_split1_1shot --load-file weights/VOC_split1_pretrain/model_final.pth -max 200 --steps 150 --checkpoint-period 50 --warmup-iter 0 --no-mixup-iter 100
+```
+To finetune on VOC dataset for split1 setting *(5 shot)*:
+```Shell
+python train.py -d VOC --split 1 --setting incre -p 2 -m ours --shot 5 --save-folder weights/fewshot/incre/VOC_split1_5shot --load-file weights/VOC_split1_pretrain/model_final.pth -max 400 --steps 350 --checkpoint-period 50 --warmup-iter 0 --no-mixup-iter 100
+```
+Note:
+- Simply change `--split` for other split settings.
+- For other shot settings, feel free to adjust `--shot`, `-max`, `--steps` and `--no-mixup-iter` to obtain satisfactory results.
 
 ## Evaluation
-- To evaluate a trained network under transfer setting:
+### Phase 1
+#### Transfer Setting
+To evaluate the pretrained model on COCO minival set:
 ```Shell
-python test_RFB.py --method CAU -m weights/VOC_CAU_5shot/Final_RFB_vgg_VOC_CAU.pth --save_folder eval/VOC_CAU_5shot/40ep/
+python test.py -d COCO -p 1 --save-folder weights/COCO60_pretrain --resume
 ```
-
-- To evaluate a trained network under incremental setting:
+#### Incremental setting
+To evaluate the pretrained model on VOC2007 test set (specify your target split via `--split`):
 ```Shell
-python test_RFB.py --method CAU_incre -m weights/VOC_split1_5shot/RFB_vgg_VOC_CAU_incre_epoches_4.pth --save_folder eval/VOC_split1_5shot/4ep/
+python test.py -d VOC --split 1 --setting incre -p 1 --save-folder weights/VOC_split1_pretrain --resume
 ```
-By default, it will directly output the mAP results on VOC2007 *test*.
+### Phase 2
+#### Transfer Setting
+To evaluate the transferred model on VOC2007 test set:
+```Shell
+python test.py -d VOC -p 2 --save-folder weights/fewshot/transfer/VOC_5shot --resume
+```
+#### Incremental setting
+To evaluate the incremental model on VOC2007 test set (specify your target split via `--split`):
+```Shell
+python test.py -d VOC --split 1 --setting incre -p 2 --save-folder weights/fewshot/incre/VOC_split1_5shot --resume
+```
+Note:
+- --resume: load model from the last checkpoint in the folder `--save-folder`.
 
+If you would like to manually specify the path to load model, use `--load-file path/to/model.pth` instead of `--resume`.
+
+&nbsp;
+
+Should you have any questions regarding this repo, feel free to email me at ze001@e.ntu.edu.sg.

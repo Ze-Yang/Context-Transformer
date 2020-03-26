@@ -9,18 +9,62 @@ Updated by: Ellis Brown, Max deGroot
 import os
 import pickle
 import os.path
-import sys
 import torch
 import torch.utils.data as data
-import torchvision.transforms as transforms
 import cv2
 import numpy as np
 import json
-import uuid
+import itertools
 
 from utils.pycocotools.coco import COCO
 from utils.pycocotools.cocoeval import COCOeval
-from utils.pycocotools import mask as COCOmask
+from tabulate import tabulate
+from collections import OrderedDict
+
+
+_PREDEFINED_SPLITS_COCO = {
+    "train2014": ("train2014", "annotations/instances_train2014.json"),
+    "val2014": ("val2014", "annotations/instances_val2014.json"),
+    "minival2014": ("val2014", "annotations/instances_minival2014.json"),
+    "valminusminival2014": (
+        "val2014",
+        "annotations/instances_valminusminival2014.json",
+    ),
+    "split_nonvoc_train2014": (
+        "train2014",
+        "annotations/split_nonvoc_instances_train2014.json",
+    ),
+    "split_voc_train2014": (
+        "train2014",
+        "annotations/split_voc_instances_train2014.json",
+    ),
+    "split_nonvoc_val2014": (
+        "val2014",
+        "annotations/split_nonvoc_instances_val2014.json",
+    ),
+    "split_voc_val2014": (
+        "val2014",
+        "annotations/split_voc_instances_val2014.json",
+    ),
+    "split_nonvoc_minival2014": (
+        "val2014",
+        "annotations/split_nonvoc_instances_minival2014.json",
+    ),
+    "split_voc_minival2014": (
+        "val2014",
+        "annotations/split_voc_instances_minival2014.json",
+    ),
+    "split_nonvoc_valminusminival2014": (
+        "val2014",
+        "annotations/split_nonvoc_instances_valminusminival2014.json",
+    ),
+
+    "split_voc_valminusminival_2014": (
+        "val2014",
+        "annotations/split_voc_instances_valminusminival2014.json",
+    ),
+
+}
 
 
 class COCODetection(data.Dataset):
@@ -51,74 +95,55 @@ class COCODetection(data.Dataset):
         self.name = dataset_name
         self.ids = list()
         self.annotations = list()
-        self._view_map = {
-            'minival2014' : 'val2014',          # 5k val2014 subset
-            'valminusminival2014' : 'val2014',  # val2014 \setminus minival2014
-            'test-dev2015' : 'test2015',
-        }
 
         for (year, image_set) in image_sets:
-            coco_name = image_set+year # train2014
-            data_name = (self._view_map[coco_name]
-                        if coco_name in self._view_map
-                        else coco_name)
-            annofile = self._get_ann_file(coco_name)
-            _COCO = COCO(annofile)
-            self._COCO = _COCO
+            coco_name = image_set+year
+            image_root = os.path.join(root, 'images', _PREDEFINED_SPLITS_COCO[coco_name][0])
+            annofile = os.path.join(root, _PREDEFINED_SPLITS_COCO[coco_name][1])
+            self._COCO = COCO(annofile)
             self.coco_name = coco_name
-            cats = _COCO.loadCats(_COCO.getCatIds())
-            self._classes = tuple(['__background__'] + [c['name'] for c in cats])
-            self.num_classes = len(self._classes)
-            self._class_to_ind = dict(zip(self._classes, range(self.num_classes)))
-            self._class_to_coco_cat_id = dict(zip([c['name'] for c in cats],
-                                                  _COCO.getCatIds()))
-            indexes = _COCO.getImgIds()
-            self.image_indexes = indexes
-            self.ids.extend([self.image_path_from_index(data_name, index) for index in indexes ])
-            if image_set.find('test') != -1:
-                print('test set will not load annotations!')
-            else:
-                self.annotations.extend(self._load_coco_annotations(coco_name, indexes,_COCO))
-
-
-
-    def image_path_from_index(self, name, index):
-        """
-        Construct an image path from the image's "index" identifier.
-        """
-        # Example image path for index=119993:
-        #   images/train2014/COCO_train2014_000000119993.jpg
-        file_name = ('COCO_' + name + '_' +
-                     str(index).zfill(12) + '.jpg')
-        image_path = os.path.join(self.root, 'images',
-                              name, file_name)
-        assert os.path.exists(image_path), \
-                'Path does not exist: {}'.format(image_path)
-        return image_path
-
-
-    def _get_ann_file(self, name):
-        prefix = 'instances' if name.find('test') == -1 \
-                else 'image_info'                            # 如果name里没有'test',prefix取instances
-        return os.path.join(self.root, 'annotations',
-                        prefix + '_' + name + '.json')
-
+            self.class_name = self._get_coco_instances_meta()
+            self.num_classes = len(self.class_name)
+            self.img_ids = sorted(self._COCO.imgs.keys())
+            imgs = self._COCO.loadImgs(self.img_ids)
+            self.ids.extend([os.path.join(image_root, img["file_name"]) for img in imgs])
+            self.annotations.extend(self._load_coco_annotations(coco_name, self.img_ids, self._COCO))
 
     def _load_coco_annotations(self, coco_name, indexes, _COCO):
-        cache_file=os.path.join(self.cache_path,coco_name+'_gt_roidb.pkl')
+        cache_file=os.path.join(self.cache_path, coco_name+'_gt_roidb.pkl')
         if os.path.exists(cache_file):
             with open(cache_file, 'rb') as fid:
                 roidb = pickle.load(fid)
-            print('{} gt roidb loaded from {}'.format(coco_name,cache_file))
+            print('{} gt roidb loaded from {}'.format(coco_name, cache_file))
             return roidb
 
         gt_roidb = [self._annotation_from_index(index, _COCO)
                     for index in indexes]
+        if not os.path.exists(os.path.dirname(cache_file)):
+            os.makedirs(os.path.dirname(cache_file))
         with open(cache_file, 'wb') as fid:
-            pickle.dump(gt_roidb,fid,pickle.HIGHEST_PROTOCOL)
+            pickle.dump(gt_roidb, fid, pickle.HIGHEST_PROTOCOL)
         print('wrote gt roidb to {}'.format(cache_file))
         return gt_roidb
 
+    def _get_coco_instances_meta(self):
+        thing_ids = self._COCO.getCatIds()
+        cats = self._COCO.loadCats(thing_ids)
+        cats_name = [c['name'] for c in cats]
+        self._class_to_coco_cat_id = dict(zip(cats_name, thing_ids))
+
+        voc_inds = (0, 1, 2, 3, 4, 5, 6, 8, 14, 15, 16, 17, 18, 19, 39, 56, 57, 58, 60, 62)
+        nonvoc_inds = tuple([i for i in range(80) if i not in voc_inds])
+        if 'nonvoc' in self.coco_name:
+            self.id_map = nonvoc_inds
+            thing_ids = [thing_ids[i] for i in self.id_map]
+            thing_classes = [cats_name[k] for k in self.id_map]
+        elif 'voc' in self.coco_name:
+            self.id_map = voc_inds
+            thing_ids = [thing_ids[i] for i in self.id_map]
+            thing_classes = [cats_name[k] for k in self.id_map]
+        self._thing_dataset_id_to_contiguous_id = {k: i for i, k in enumerate(thing_ids, 1)}
+        return thing_classes
 
     def _annotation_from_index(self, index, _COCO):
         """
@@ -149,18 +174,12 @@ class COCODetection(data.Dataset):
 
         # Lookup table to map from COCO category ids to our internal class
         # indices
-        coco_cat_id_to_class_ind = dict([(self._class_to_coco_cat_id[cls],
-                                          self._class_to_ind[cls])
-                                         for cls in self._classes[1:]])
-
         for ix, obj in enumerate(objs):
-            cls = coco_cat_id_to_class_ind[obj['category_id']]
+            cls = self._thing_dataset_id_to_contiguous_id[obj['category_id']]
             res[ix, 0:4] = obj['clean_bbox']
             res[ix, 4] = cls
 
         return res
-
-
 
     def __getitem__(self, index):
         img_id = self.ids[index]
@@ -171,12 +190,12 @@ class COCODetection(data.Dataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-
         if self.preproc is not None:
             img, target = self.preproc(img, target)
 
-                    # target = self.target_transform(target, width, height)
-        #print(target.shape)
+        # in order to be compatible with mixup
+        weight = np.ones((target.shape[0], 1))
+        target = np.hstack((target, weight))
 
         return img, target
 
@@ -197,7 +216,6 @@ class COCODetection(data.Dataset):
         img_id = self.ids[index]
         return cv2.imread(img_id, cv2.IMREAD_COLOR)
 
-
     def pull_tensor(self, index):
         '''Returns the original image at an index in tensor form
 
@@ -209,57 +227,21 @@ class COCODetection(data.Dataset):
         Return:
             tensorized version of img, squeezed
         '''
-        to_tensor = transforms.ToTensor()
         return torch.Tensor(self.pull_image(index)).unsqueeze_(0)
 
-    def _print_detection_eval_metrics(self, coco_eval):
-        IoU_lo_thresh = 0.5
-        IoU_hi_thresh = 0.95
-        def _get_thr_ind(coco_eval, thr):
-            ind = np.where((coco_eval.params.iouThrs > thr - 1e-5) &
-                           (coco_eval.params.iouThrs < thr + 1e-5))[0][0]
-            iou_thr = coco_eval.params.iouThrs[ind]
-            assert np.isclose(iou_thr, thr)
-            return ind
-
-        ind_lo = _get_thr_ind(coco_eval, IoU_lo_thresh)
-        ind_hi = _get_thr_ind(coco_eval, IoU_hi_thresh)
-        # precision has dims (iou, recall, cls, area range, max dets)
-        # area range index 0: all area ranges
-        # max dets index 2: 100 per image
-        precision = \
-            coco_eval.eval['precision'][ind_lo:(ind_hi + 1), :, :, 0, 2]
-        ap_default = np.mean(precision[precision > -1])
-        print('~~~~ Mean and per-category AP @ IoU=[{:.2f},{:.2f}] '
-               '~~~~'.format(IoU_lo_thresh, IoU_hi_thresh))
-        print('{:.1f}'.format(100 * ap_default))
-        for cls_ind, cls in enumerate(self._classes):
-            if cls == '__background__':
-                continue
-            # minus 1 because of __background__
-            precision = coco_eval.eval['precision'][ind_lo:(ind_hi + 1), :, cls_ind - 1, 0, 2]
-            ap = np.mean(precision[precision > -1])
-            print('{:.1f}'.format(100 * ap))
-
-        print('~~~~ Summary metrics ~~~~')
-        coco_eval.summarize()
-
-    def _do_detection_eval(self, res_file, output_dir):
-        ann_type = 'bbox'
+    def _do_detection_eval(self, res_file):
         coco_dt = self._COCO.loadRes(res_file)
-        coco_eval = COCOeval(self._COCO, coco_dt)
-        coco_eval.params.useSegm = (ann_type == 'segm')
+        coco_eval = COCOeval(self._COCO, coco_dt, 'bbox')
         coco_eval.evaluate()
         coco_eval.accumulate()
-        self._print_detection_eval_metrics(coco_eval)
-        eval_file = os.path.join(output_dir, 'detection_results.pkl')
-        with open(eval_file, 'wb') as fid:
-            pickle.dump(coco_eval, fid, pickle.HIGHEST_PROTOCOL)
-        print('Wrote COCO eval results to: {}'.format(eval_file))
+        coco_eval.summarize()
+        results = OrderedDict()
+        results['bbox'] = self._derive_coco_results(coco_eval, 'bbox', class_names=self.class_name)
+        print_csv_format(results)
 
     def _coco_results_one_category(self, boxes, cat_id):
         results = []
-        for im_ind, index in enumerate(self.image_indexes):
+        for im_ind, index in enumerate(self.img_ids):
             dets = boxes[im_ind].astype(np.float)
             if dets == []:
                 continue
@@ -269,10 +251,10 @@ class COCODetection(data.Dataset):
             ws = dets[:, 2] - xs + 1
             hs = dets[:, 3] - ys + 1
             results.extend(
-              [{'image_id' : index,
-                'category_id' : cat_id,
-                'bbox' : [xs[k], ys[k], ws[k], hs[k]],
-                'score' : scores[k]} for k in range(dets.shape[0])])
+              [{'image_id': index,
+                'category_id': cat_id,
+                'bbox': [xs[k], ys[k], ws[k], hs[k]],
+                'score': scores[k]} for k in range(dets.shape[0])])
         return results
 
     def _write_coco_results_file(self, all_boxes, res_file):
@@ -281,35 +263,123 @@ class COCODetection(data.Dataset):
         #   "bbox": [258.15,41.29,348.26,243.78],
         #   "score": 0.236}, ...]
         results = []
-        for cls_ind, cls in enumerate(self._classes):
-            if cls == '__background__':
-                continue
-            print('Collecting {} results ({:d}/{:d})'.format(cls, cls_ind,
-                                                          self.num_classes ))
+        for cls_ind, cls in enumerate(self.class_name, 1):
+            print('Collecting {} results ({:d}/{:d})'.format(cls, cls_ind, self.num_classes))
             coco_cat_id = self._class_to_coco_cat_id[cls]
             results.extend(self._coco_results_one_category(all_boxes[cls_ind],
                                                            coco_cat_id))
-            '''
-            if cls_ind ==30:
-                res_f = res_file+ '_1.json'
-                print('Writing results json to {}'.format(res_f))
-                with open(res_f, 'w') as fid:
-                    json.dump(results, fid)
-                results = []
-            '''
-        #res_f2 = res_file+'_2.json'
         print('Writing results json to {}'.format(res_file))
         with open(res_file, 'w') as fid:
             json.dump(results, fid)
+            fid.flush()
 
     def evaluate_detections(self, all_boxes, output_dir):
-        res_file = os.path.join(output_dir, ('detections_' +
-                                         self.coco_name +
-                                         '_results'))
+        res_file = os.path.join(output_dir, 'detections_' + self.coco_name + '_results')
         res_file += '.json'
         self._write_coco_results_file(all_boxes, res_file)
         # Only do evaluation on non-test sets
         if self.coco_name.find('test') == -1:
-            self._do_detection_eval(res_file, output_dir)
-        # Optionally cleanup results json file
+            self._do_detection_eval(res_file)
 
+    def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
+        """
+        Derive the desired score numbers from summarized COCOeval.
+
+        Args:
+            coco_eval (None or COCOEval): None represents no predictions from model.
+            iou_type (str):
+            class_names (None or list[str]): if provided, will use it to predict
+                per-category AP.
+
+        Returns:
+            a dict of {metric name: score}
+        """
+
+        metrics = {
+            "bbox": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
+            "segm": ["AP", "AP50", "AP75", "APs", "APm", "APl"],
+            "keypoints": ["AP", "AP50", "AP75", "APm", "APl"],
+        }[iou_type]
+
+        if coco_eval is None:
+            print("No predictions from the model! Set scores to -1")
+            return {metric: -1 for metric in metrics}
+
+        # the standard metrics
+        results = {metric: float(coco_eval.stats[idx] * 100) for idx, metric in enumerate(metrics)}
+        print(
+            "Evaluation results for {}: \n".format(iou_type) + create_small_table(results)
+        )
+
+        if class_names is None or len(class_names) <= 1:
+            return results
+        # Compute per-category AP
+        # from https://github.com/facebookresearch/Detectron/blob/a6a835f5b8208c45d0dce217ce9bbda915f44df7/detectron/datasets/json_dataset_evaluator.py#L222-L252 # noqa
+        precisions = coco_eval.eval["precision"]
+        # precision has dims (iou, recall, cls, area range, max dets)
+        # assert len(class_names) == precisions.shape[2]
+
+        results_per_category = []
+        for idx, name in zip(self.id_map, class_names):
+            # area range index 0: all area ranges
+            # max dets index -1: typically 100 per image
+            precision = precisions[:, :, idx, 0, -1]
+            precision = precision[precision > -1]
+            ap = np.mean(precision) if precision.size else float("nan")
+            results_per_category.append(("{}".format(name), float(ap * 100)))
+
+        # tabulate it
+        N_COLS = min(6, len(results_per_category) * 2)
+        results_flatten = list(itertools.chain(*results_per_category))
+        results_2d = itertools.zip_longest(*[results_flatten[i::N_COLS] for i in range(N_COLS)])
+        table = tabulate(
+            results_2d,
+            tablefmt="pipe",
+            floatfmt=".3f",
+            headers=["category", "AP"] * (N_COLS // 2),
+            numalign="left",
+        )
+        print("Per-category {} AP: \n".format(iou_type) + table)
+
+        results.update({"AP-" + name: ap for name, ap in results_per_category})
+        return results
+
+
+def create_small_table(small_dict):
+    """
+    Create a small table using the keys of small_dict as headers. This is only
+    suitable for small dictionaries.
+
+    Args:
+        small_dict (dict): a result dictionary of only a few items.
+
+    Returns:
+        str: the table as a string.
+    """
+    keys, values = tuple(zip(*small_dict.items()))
+    table = tabulate(
+        [values],
+        headers=keys,
+        tablefmt="pipe",
+        floatfmt=".3f",
+        stralign="center",
+        numalign="center",
+    )
+    return table
+
+
+def print_csv_format(results):
+    """
+    Print main metrics in a format similar to Detectron,
+    so that they are easy to copypaste into a spreadsheet.
+
+    Args:
+        results (OrderedDict[dict]): task_name -> {metric -> score}
+    """
+    assert isinstance(results, OrderedDict), results  # unordered results cannot be properly printed
+    for task, res in results.items():
+        # Don't print "AP-category" metrics since they are usually not tracked.
+        important_res = [(k, v) for k, v in res.items() if "-" not in k]
+        print("copypaste: Task: {}".format(task))
+        print("copypaste: " + ",".join([k[0] for k in important_res]))
+        print("copypaste: " + ",".join(["{0:.4f}".format(k[1]) for k in important_res]))

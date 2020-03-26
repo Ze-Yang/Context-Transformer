@@ -2,9 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from utils.box_utils import match
-GPU = False
-if torch.cuda.is_available():
-    GPU = True
 
 
 class MultiBoxLoss_combined(nn.Module):
@@ -54,22 +51,20 @@ class MultiBoxLoss_combined(nn.Module):
             ground_truth (tensor): Ground truth boxes and labels for a batch,
                 shape: [batch_size,num_objs,5] (last idx is the label).
         """
+        # loc_data[batch_size, num_priors, 4]
+        # conf_data[batch_size, num_priors, num_classes]
+        # obj_data[batch_size, num_priors, 2]
+        loc_data, conf_data, obj_data = predictions
 
-        loc_data, conf_data, obj_data = predictions # conf_data[batch_size, num_priors, num_classes]
-                                                    # loc_data[batch_size, num_priors, 4]
-                                                    # obj_data[batch_size, num_priors, 2]
+        device = loc_data.device
+        targets = [anno.to(device) for anno in targets]
         num = loc_data.size(0)
         num_priors = priors.size(0)
 
         # match priors (default boxes) and ground truth boxes
-        if GPU:
-            loc_t = torch.Tensor(num, num_priors, 4).cuda()
-            conf_t = torch.Tensor(num, num_priors, 2).cuda()
-            obj_t = torch.ByteTensor(num, num_priors).cuda()
-        else:
-            loc_t = torch.Tensor(num, num_priors, 4)
-            conf_t = torch.Tensor(num, num_priors, 2)
-            obj_t = torch.ByteTensor(num, num_priors)
+        loc_t = torch.Tensor(num, num_priors, 4).to(device)
+        conf_t = torch.Tensor(num, num_priors, 2).to(device)
+        obj_t = torch.BoolTensor(num, num_priors).to(device)
 
         # match priors with gt
         for idx in range(num): # batch_size
@@ -78,120 +73,52 @@ class MultiBoxLoss_combined(nn.Module):
             defaults = priors.data              # [num_priors,4]
             match(self.threshold, truths, defaults, self.variance, labels, loc_t, conf_t, obj_t, idx)
 
-        pos = (conf_t[:, :, 0] > 0).byte() # [num, num_priors]
+        pos = (conf_t[:, :, 0] > 0).bool()  # [num, num_priors]
         num_pos = (conf_t[:, :, 1] * pos.float()).sum(1, keepdim=True).long()
 
         # Localization Loss (Smooth L1)
         # Shape: [batch,num_priors,4]
-        loc_p = loc_data[pos] #整个batch的正样本priors
-        loc_t = loc_t[pos]    #对应的target
-        loss_l = F.smooth_l1_loss(loc_p, loc_t, reduction='none') # size_average=False等价于reduction='sum'
+        loc_p = loc_data[pos]
+        loc_t = loc_t[pos]
+        loss_l = F.smooth_l1_loss(loc_p, loc_t, reduction='none')
         weight_pos = conf_t[pos][:, 1]
         loss_l = torch.sum(torch.sum(loss_l, dim=1) * weight_pos)
 
-
-
         # Compute object loss across batch for hard negative mining
         with torch.no_grad():
-            loss_obj = F.cross_entropy(obj_data.view(-1, 2), obj_t.long().view(-1), reduction='none')  # [batch*num_priors]
+            loss_obj = F.cross_entropy(obj_data.view(-1, 2), obj_t.long().view(-1), reduction='none')
             # Hard Negative Mining
-            loss_obj[obj_t.view(-1)] = 0  # filter out pos boxes for now
+            loss_obj[obj_t.view(-1)] = 0  # filter out pos boxes (label>0) and ignored boxes (label=-1) for now
             loss_obj = loss_obj.view(num, -1)
             _, loss_idx = loss_obj.sort(1, descending=True)
             _, idx_rank = loss_idx.sort(1)
             num_neg = torch.clamp(self.negpos_ratio * num_pos, max=num_priors - 1)
-            neg = idx_rank < num_neg.expand_as(idx_rank)  # [batch, num_priors] 每张图里取loss_obj最大的num_neg个框用来计算loss_obj
+            neg = idx_rank < num_neg.expand_as(idx_rank)  # [num, num_priors]
 
         # Object Loss Including Positive and Negative Examples
-        mask = (pos + neg).gt(0)
+        mask = pos | neg
         weight = conf_t[mask][:, 1]
         loss_obj = torch.sum(F.cross_entropy(obj_data[mask], obj_t[mask].long(), reduction='none') * weight)
 
-
-
-        # Confidence Loss(cosine distance to classes center)
+        # Confidence Loss (cosine distance to classes center)
         # pos [num, num_priors]
         # conf_data [num, num_priors, feature_dim]
-        batch_conf = conf_data.view(-1, self.num_classes)  # [n_way, num_classes]
+        batch_conf = conf_data.view(-1, self.num_classes-1)
 
         # Compute max conf across batch for hard negative mining (logit-combined)
-        batch_obj = obj_data.view(-1, 2)  # [n_way*n_shot*num_priors, 2]
+        batch_obj = obj_data.view(-1, 2)  # [num*num_priors, 2]
         logit_0 = batch_obj[:, 0].unsqueeze(1) + torch.log(
-            torch.exp(batch_conf).sum(dim=1, keepdim=True))  # [n_way*n_query*num_priors, 1]
-        logit_k = batch_obj[:, 1].unsqueeze(1).expand_as(batch_conf) + batch_conf  # [n_way*n_query*num_priors, n_way]
-        logit = torch.cat((logit_0, logit_k), 1)  # [n_way*n_query*num_priors, n_way+1]
+            torch.exp(batch_conf).sum(dim=1, keepdim=True))
+        logit_k = batch_obj[:, 1].unsqueeze(1).expand_as(batch_conf) + batch_conf
+        logit = torch.cat((logit_0, logit_k), 1)
 
         # Confidence Loss Including Positive and Negative Examples
-        logit = logit.view(num, -1, self.num_classes+1)
+        logit = logit.view(num, -1, self.num_classes)
         loss_c = torch.sum(F.cross_entropy(logit[mask], conf_t[mask][:, 0].long(), reduction='none') * weight)
 
-        # import numpy as np
-        # from utils.box_utils import point_form
-        # import matplotlib.pyplot as plt
-        # import cv2
-        # np_img = images.cpu().numpy()
-        # targets = [(anno.cpu().numpy() * 300).astype(np.uint16) for anno in targets]
-        # num = images.shape[0]
-        # imgs = np.transpose(np_img, (0, 2, 3, 1))
-        # imgs = (imgs + np.array([104, 117, 123])) / 255  # RGB
-        # imgs = imgs[:, :, :, ::-1]  # BGR
-        # boxes = np.clip(point_form(priors).cpu().numpy(), 0, 1)
-        # boxes = (boxes * 300).astype(np.uint16)
-        #
-        # for i in range(num):
-        #     img = imgs[i, :, :, :].copy()
-        #     gt = targets[i][:, :4]
-        #     for j in range(gt.shape[0]):
-        #         cv2.rectangle(img, (gt[j, 0], gt[j, 1]), (gt[j, 2], gt[j, 3]), (0, 0, 1))
-        #     # for k in [0, 8664, 10830, 11430, 11580, 11616]:
-        #     # for k in range(priors.size(0)):
-        #     #     if obj_t[i, k] > 0:
-        #     #         cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (0, 1, 0))
-        #     # for k in range(priors.size(0)):
-        #     #     if neg[i, k] > 0:
-        #     #         cv2.rectangle(img, (boxes[k, 0], boxes[k, 1]), (boxes[k, 2], boxes[k, 3]), (1, 0, 0))
-        #     plt.imshow(img)
-        #     plt.show()
-
-        # Sum of losses: L(x,c,l,g) = (Lconf(x, c) + αLloc(x,l,g)) / N
-        N = weight_pos.sum()
+        N = num_pos.sum()
         loss_l /= N
         loss_c /= N
         loss_obj /= N
 
-        return loss_l, loss_c, loss_obj
-
-
-def vis_picture(imgs, targets):
-    from data.coco_voc_form import COCO_CLASSES
-    from utils.box_utils import point_form
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import cv2
-    npimg = imgs.cpu().numpy()
-    targets = [[anno.cpu().numpy() for anno in cls_list] for cls_list in targets]
-    n_way = npimg.shape[0]
-    per_way = npimg.shape[1]
-    imgs = np.transpose(npimg, (0, 1, 3, 4, 2))
-    imgs = (imgs + np.array([104, 117, 123])) / 255 # RGB
-    imgs = imgs[:, :, :, :, ::-1] # BGR
-
-    for i in range(n_way):
-        cls = COCO_CLASSES[int(targets[i][0][targets[i][0][:, -1]!=-1, -1][0])]
-        for j in range(per_way):
-            fig = plt.figure()
-            fig.suptitle(cls)
-            # ax = fig.add_subplot(per_way, 1, j+1)
-            img = imgs[i, j, :, :, :].copy()
-            labels = targets[i][j][:, -1]
-            boxes = targets[i][j][:, :4]
-            boxes = (boxes * 300).astype(np.uint16)
-            boxes_pos = boxes[labels != -1]
-            boxes_neg = boxes[labels == -1]
-            for k in range(boxes_neg.shape[0]):
-                cv2.rectangle(img, (boxes_neg[k, 0], boxes_neg[k, 1]), (boxes_neg[k, 2], boxes_neg[k, 3]), (1, 0, 0))
-            for k in range(boxes_pos.shape[0]):
-                cv2.rectangle(img, (boxes_pos[k, 0], boxes_pos[k, 1]), (boxes_pos[k, 2], boxes_pos[k, 3]), (0, 1, 0))
-            # cls = COCO_CLASSES[int(labels[0])]
-            plt.imshow(img)
-            plt.show()
+        return {'loss_box_reg': loss_l, 'loss_cls': loss_c, 'loss_obj': loss_obj}

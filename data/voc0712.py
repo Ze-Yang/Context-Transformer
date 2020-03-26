@@ -13,7 +13,7 @@ import sys
 import torch
 import torch.utils.data as data
 import torchvision.transforms as transforms
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 import cv2
 import numpy as np
 from .voc_eval import voc_eval
@@ -23,12 +23,37 @@ else:
     import xml.etree.ElementTree as ET
 
 
-VOC_CLASSES = ( '__background__', # always index 0
+VOC_CLASSES = dict()
+VOC_CLASSES[0] = ('__background__',
     'aeroplane', 'bicycle', 'bird', 'boat',
     'bottle', 'bus', 'car', 'cat', 'chair',
     'cow', 'diningtable', 'dog', 'horse',
     'motorbike', 'person', 'pottedplant',
     'sheep', 'sofa', 'train', 'tvmonitor')
+
+# for data split 1
+VOC_CLASSES[1] = ('__background__',
+    'aeroplane', 'bicycle', 'boat', 'bottle',
+    'car', 'cat', 'chair', 'diningtable',
+    'dog', 'horse', 'person', 'pottedplant',
+    'sheep', 'train', 'tvmonitor', 'bird',
+    'bus', 'cow', 'motorbike', 'sofa')
+
+# for data split 2
+VOC_CLASSES[2] = ('__background__',
+    'bicycle', 'bird', 'boat', 'bus',
+    'car', 'cat', 'chair', 'diningtable',
+    'dog', 'motorbike', 'person', 'pottedplant',
+    'sheep', 'train', 'tvmonitor', 'aeroplane',
+    'bottle', 'cow', 'horse', 'sofa')
+
+# for data split 3
+VOC_CLASSES[3] = ('__background__',
+    'aeroplane', 'bicycle', 'bird', 'bottle',
+    'bus', 'car', 'chair', 'cow',
+    'diningtable', 'dog', 'horse', 'person',
+    'pottedplant', 'train', 'tvmonitor', 'boat',
+    'cat', 'motorbike', 'sheep', 'sofa')
 
 # for making bounding boxes pretty
 COLORS = ((255, 0, 0, 128), (0, 255, 0, 128), (0, 0, 255, 128),
@@ -103,9 +128,9 @@ class AnnotationTransform(object):
         width (int): width
     """
 
-    def __init__(self, class_to_ind=None, keep_difficult=True):
+    def __init__(self, split, class_to_ind=None, keep_difficult=True):
         self.class_to_ind = class_to_ind or dict(
-            zip(VOC_CLASSES, range(len(VOC_CLASSES))))
+            zip(VOC_CLASSES[split], range(len(VOC_CLASSES[split]))))
         self.keep_difficult = keep_difficult
 
     def __call__(self, target):
@@ -116,7 +141,7 @@ class AnnotationTransform(object):
         Returns:
             a list containing lists of bounding boxes  [bbox coords, class name]
         """
-        res = np.empty((0,5))
+        res = np.empty((0, 5))
         for obj in target.iter('object'):
             difficult = int(obj.find('difficult').text) == 1
             if not self.keep_difficult and difficult:
@@ -129,12 +154,10 @@ class AnnotationTransform(object):
             for i, pt in enumerate(pts):
                 cur_pt = int(bbox.find(pt).text) - 1
                 # scale height or width
-                #cur_pt = cur_pt / width if i % 2 == 0 else cur_pt / height
                 bndbox.append(cur_pt)
             label_idx = self.class_to_ind[name]
             bndbox.append(label_idx)
-            res = np.vstack((res,bndbox))  # [xmin, ymin, xmax, ymax, label_ind]
-            # img_id = target.find('filename').text[:-4]
+            res = np.vstack((res, bndbox))  # [xmin, ymin, xmax, ymax, label_ind]
 
         return res  # [[xmin, ymin, xmax, ymax, label_ind], ... ]
 
@@ -157,33 +180,43 @@ class VOCDetection(data.Dataset):
             (default: 'VOC2007')
     """
 
-    def __init__(self, root, image_sets, preproc=None, target_transform=None,
-                 n_shot_task=1, random_seed=None, phase='train', dataset_name='VOC0712'):
+    def __init__(self, args, root, image_sets, preproc=None, target_transform=None, test=False):
         self.root = root
         self.image_set = image_sets
         self.preproc = preproc
         self.target_transform = target_transform
-        self.name = dataset_name
         self._annopath = os.path.join('%s', 'Annotations', '%s.xml')
         self._imgpath = os.path.join('%s', 'JPEGImages', '%s.jpg')
         self.mixup = None
         self.mixup_args = None
         self.ids = list()
+        self.split = 0 if args.setting == 'transfer' else args.split
+        self.setting = args.setting
+        self.phase = args.phase
+
         for (year, name) in image_sets:
             self._year = year
             rootpath = os.path.join(self.root, 'VOC' + year)
-            if phase == 'train':
-                if random_seed is not None:
-                    for line in open(os.path.join(rootpath, 'ImageSets', 'Main',
-                                                  name + '_' + str(n_shot_task) + 'shot_s' + str(random_seed) + '.txt')):
-                        self.ids.append((rootpath, line.strip()))
-                else:
-                    for line in open(os.path.join(rootpath, 'ImageSets', 'Main',
-                                                  name + '_' + str(n_shot_task) + 'shot.txt')):
-                        self.ids.append((rootpath, line.strip()))
-            else:
+            if test:
                 for line in open(os.path.join(rootpath, 'ImageSets', 'Main', name + '.txt')):
                     self.ids.append((rootpath, line.strip()))
+            elif args.phase == 1:
+                for line in open(
+                        os.path.join(rootpath, 'ImageSets', 'Main', name + '_split' + str(args.split) + '.txt')):
+                    self.ids.append((rootpath, line.strip()))
+            elif args.phase == 2:
+                if args.setting == 'transfer':
+                    for line in open(os.path.join(rootpath, 'ImageSets', 'Main',
+                                                  name + '_' + str(args.shot) + 'shot.txt')):
+                        self.ids.append((rootpath, line.strip()))
+                elif args.setting == 'incre':
+                    for cls in VOC_CLASSES[args.split][1:]:
+                        for line in open(
+                                os.path.join(rootpath, 'ImageSets', 'Main', '1_box', cls + '.txt')
+                        ).readlines()[:args.shot]:
+                            self.ids.append((rootpath, line.strip()))
+            else:
+                raise ValueError(f"Unknown data setting.")
 
     def __getitem__(self, index):
         # first image
@@ -196,6 +229,9 @@ class VOCDetection(data.Dataset):
 
         if self.preproc is not None:
             img1, target1 = self.preproc(img1, target1)
+
+        if self.setting == 'incre' and self.phase == 2:
+            target1[1:, -1] = -1
 
         lambd = 1
         # draw a random lambda ratio from distribution
@@ -220,18 +256,24 @@ class VOCDetection(data.Dataset):
         if self.preproc is not None:
             img2, target2 = self.preproc(img2, target2)
 
+        if self.setting == 'incre' and self.phase == 2:
+            target2[1:, -1] = -1
+
         # mixup two images
         mix_img = img1 * lambd + img2 * (1. - lambd)
         y1 = np.hstack((target1, np.full((target1.shape[0], 1), lambd)))
         y2 = np.hstack((target2, np.full((target2.shape[0], 1), 1. - lambd)))
         mix_target = np.vstack((y1, y2))
+        if self.setting == 'incre' and self.phase == 2:
+            # set the weight of label -1 to 0, ignoring them in loss computation.
+            mix_target[mix_target[:, -2] == -1, -1] = 0
 
         return mix_img, mix_target
 
     def __len__(self):
         return len(self.ids)
 
-    def set_mixup(self, mixup=None, *args):
+    def set_mixup(self, mixup, *args):
         """Set mixup random sampler, use None to disable.
 
                 Parameters
@@ -313,7 +355,7 @@ class VOCDetection(data.Dataset):
         return path
 
     def _write_voc_results_file(self, all_boxes):
-        for cls_ind, cls in enumerate(VOC_CLASSES):
+        for cls_ind, cls in enumerate(VOC_CLASSES[self.split][:16 if self.phase == 1 else 21]):
             if cls == '__background__':
                 continue
             print('Writing {} VOC results file'.format(cls))
@@ -349,7 +391,7 @@ class VOCDetection(data.Dataset):
         print('VOC07 metric? ' + ('Yes' if use_07_metric else 'No'))
         if output_dir is not None and not os.path.isdir(output_dir):
             os.mkdir(output_dir)
-        for i, cls in enumerate(VOC_CLASSES):
+        for i, cls in enumerate(VOC_CLASSES[self.split][:16 if self.phase == 1 else 21]):
 
             if cls == '__background__':
                 continue
@@ -368,7 +410,9 @@ class VOCDetection(data.Dataset):
         print('Results:')
         for ap in aps:
             print('{:.4f}'.format(ap))
-        print('{:.4f}'.format(np.mean(aps)))
+        if self.setting == 'incre' and self.phase == 2:
+            print('Base AP = {:.4f}\tNovel AP = {:.4f}'.format(np.mean(aps[:15]), np.mean(aps[15:])))
+        print('Mean AP = {:.4f}'.format(np.mean(aps)))
         print('~~~~~~~~')
         print('')
         print('--------------------------------------------------------------')
@@ -402,21 +446,3 @@ def detection_collate(batch):
                 targets.append(annos)
 
     return torch.stack(imgs, 0), targets
-
-
-class EpisodicBatchSampler(data.Sampler):
-    def __init__(self, n_classes, n_way, n_episodes, phase='train'):
-        self.n_classes = n_classes
-        self.n_way = n_way
-        self.n_episodes = n_episodes  # 100
-        self.phase = phase
-
-    def __len__(self):
-        return self.n_episodes
-
-    def __iter__(self):
-        for i in range(self.n_episodes):
-            if self.phase == 'train':
-                yield torch.randperm(self.n_classes)[:self.n_way].tolist()
-            else:
-                yield torch.arange(self.n_classes)[:self.n_way].tolist()

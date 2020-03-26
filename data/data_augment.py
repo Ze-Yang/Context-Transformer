@@ -6,19 +6,17 @@ http://arxiv.org/abs/1512.02325
 """
 
 import torch
-from torchvision import transforms
 import cv2
 import numpy as np
 import random
 import math
 from utils.box_utils import matrix_iou
-import matplotlib.pyplot as plt
-# import torch_transforms
+
 
 def _crop(image, boxes, labels, cls=None):
     height, width, _ = image.shape
 
-    if len(boxes)== 0:
+    if len(boxes) == 0:
         return image, boxes, labels
 
     while True:
@@ -43,7 +41,7 @@ def _crop(image, boxes, labels, cls=None):
 
         for _ in range(50):
             scale = random.uniform(0.3, 1.)
-            min_ratio = max(0.5, scale*scale) # aspect radio
+            min_ratio = max(0.5, scale*scale)  # aspect radio
             max_ratio = min(2, 1. / scale / scale)
             ratio = math.sqrt(random.uniform(min_ratio, max_ratio))
             w = int(scale * ratio * width)
@@ -52,9 +50,9 @@ def _crop(image, boxes, labels, cls=None):
             t = random.randrange(height - h)
             roi = np.array((l, t, l + w, t + h))
 
-            iou = matrix_iou(boxes, roi[np.newaxis]) # roi[1, 4]
+            iou = matrix_iou(boxes, roi[np.newaxis])  # roi[1, 4]
             
-            if not (min_iou <= iou.min() and iou.max() <= max_iou): # 至少有一个box满足与roi的overlap在预定范围内
+            if not (min_iou <= iou.min() and iou.max() <= max_iou):
                 continue
 
             image_t = image[roi[1]:roi[3], roi[0]:roi[2]]
@@ -71,9 +69,9 @@ def _crop(image, boxes, labels, cls=None):
                     continue
 
             boxes_t[:, :2] = np.maximum(boxes_t[:, :2], roi[:2])
-            boxes_t[:, :2] -= roi[:2] # 求出新的box在roi中的坐标
+            boxes_t[:, :2] -= roi[:2]
             boxes_t[:, 2:] = np.minimum(boxes_t[:, 2:], roi[2:])
-            boxes_t[:, 2:] -= roi[:2] # 求出新的box在roi中的坐标
+            boxes_t[:, 2:] -= roi[:2]
 
             return image_t, boxes_t, labels_t
 
@@ -107,18 +105,18 @@ def _distort(image):
 
     return image
 
+
 def _expand(image, boxes, fill, p):
     if random.random() > p:
         return image, boxes
 
     height, width, depth = image.shape
-    # for _ in range(50):
     while True:
-        scale = random.uniform(1,4)
+        scale = random.uniform(1, 4)
 
         min_ratio = max(0.5, 1./scale/scale)
         max_ratio = min(2, scale*scale)
-        ratio = math.sqrt(random.uniform(min_ratio, max_ratio)) # [0.5, 2]
+        ratio = math.sqrt(random.uniform(min_ratio, max_ratio))  # [0.5, 2]
         ws = scale*ratio
         hs = scale/ratio
         if ws < 1 or hs < 1:
@@ -132,7 +130,6 @@ def _expand(image, boxes, fill, p):
         boxes_t = boxes.copy()
         boxes_t[:, :2] += (left, top)
         boxes_t[:, 2:] += (left, top)
-
 
         expand_image = np.empty(
             (h, w, depth),
@@ -161,23 +158,7 @@ def preproc_for_test(image, insize, mean):
     image -= mean
     return image.transpose(2, 0, 1)
 
-def vis_picture(im):
-    import numpy as np
-    import matplotlib.pyplot as plt
-    # npimg = im.cpu().numpy()
-    #npimg = np.squeeze(npimg, 0)
-    # im = np.transpose(im, (1, 2, 0))
 
-    # im = (im + np.array([104, 117, 123])) / 255
-    im = im[:, :, ::-1] # RGB to BGR
-    #im[:,:,0] = 0
-    # plt.ion()
-    # plt.cla()
-    plt.imshow(im)
-    plt.show()
-
-import numpy as np
-import matplotlib.pyplot as plt
 class preproc(object):
 
     def __init__(self, resize, rgb_means, p):
@@ -188,18 +169,9 @@ class preproc(object):
     def __call__(self, image, targets, cls=None):
         boxes = targets[:, :-1].copy()
         labels = targets[:, -1].copy()
-        # if len(boxes) == 0:
-        #     #boxes = np.empty((0, 4))
-        #     targets = np.zeros((1,5))
-        #     image = preproc_for_test(image, self.resize, self.means)
-        #     return torch.from_numpy(image), targets
 
-        # im1 = image[:, :, ::-1]
-        # plt.figure()
-        # plt.subplot(2, 3, 1)
-        # plt.imshow(im1)
-        #######################################################可以共享boxes变成percent的计算过程
-        # 转换成percent, o means origin image
+        # TODO can share the procedure of convert the box to percent format
+        # convert to percent format, o means origin image
         image_o = image.copy()
         targets_o = targets.copy()
         height_o, width_o, _ = image_o.shape
@@ -208,33 +180,18 @@ class preproc(object):
         boxes_o[:, 0::2] /= width_o
         boxes_o[:, 1::2] /= height_o
         labels_o = np.expand_dims(labels_o, 1)
-        targets_o = np.hstack((boxes_o,labels_o))
-        # print('out image', id(image))
+        targets_o = np.hstack((boxes_o, labels_o))
+
         if cls is None:
             image_t, boxes, labels = _crop(image, boxes, labels)
         else:
             image_t, boxes, labels = _crop(image, boxes, labels, cls)
-        # print('out image_t', id(image_t))
-        # print(image_t.base is image)
-        # im2 = image_t[:, :, ::-1]
-        # plt.subplot(2, 3, 2)
-        # plt.imshow(im2)
 
-        image_t = _distort(image_t) # 通道经过线性变换,同时改变饱和度
-        # im3 = image_t[:, :, ::-1]
-        # plt.subplot(2, 3, 3)
-        # plt.imshow(im3)
+        image_t = _distort(image_t)  # image channels undergo linear transform, also change the saturability
 
         image_t, boxes = _expand(image_t, boxes, self.means, self.p)
-        # im4 = image_t[:, :, ::-1]
-        # plt.subplot(2, 3, 4)
-        # plt.imshow(im4)
 
         image_t, boxes = _mirror(image_t, boxes)
-        # im5 = image_t[:, :, ::-1]
-        # plt.subplot(2, 3, 5)
-        # plt.imshow(im5)
-        # plt.show()
 
         height, width, _ = image_t.shape
         image_t = preproc_for_test(image_t, self.resize, self.means)
@@ -243,7 +200,7 @@ class preproc(object):
         boxes[:, 1::2] /= height
         b_w = (boxes[:, 2] - boxes[:, 0])*1.
         b_h = (boxes[:, 3] - boxes[:, 1])*1.
-        mask_b= np.minimum(b_w, b_h) > 0.01 # 处理后的box的长宽最少要占原图像的0.01以上,否则滤去
+        mask_b = np.minimum(b_w, b_h) > 0.01
         boxes_t = boxes[mask_b]
         labels_t = labels[mask_b].copy()
 
@@ -252,7 +209,7 @@ class preproc(object):
                 image = preproc_for_test(image_o, self.resize, self.means)
                 return torch.from_numpy(image), targets_o
         else:
-            if len(boxes_t) == 0 or (labels_t != (cls + 1)).all(): #防止被mask之后丢失对应类别的box
+            if len(boxes_t) == 0 or (labels_t != (cls + 1)).all():
                 image = preproc_for_test(image_o, self.resize, self.means)
                 return torch.from_numpy(image), targets_o
 
@@ -260,7 +217,6 @@ class preproc(object):
         targets_t = np.hstack((boxes_t, labels_t))
 
         return torch.from_numpy(image_t), targets_t
-
 
 
 class BaseTransform(object):
@@ -298,7 +254,7 @@ class BaseTransform(object):
         interp_methods = [cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
         interp_method = interp_methods[0]
         img = cv2.resize(np.array(img), (self.resize,
-                                         self.resize),interpolation = interp_method).astype(np.float32)
+                                         self.resize), interpolation=interp_method).astype(np.float32)
         img -= self.means
         img = img.transpose(self.swap)
 
