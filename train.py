@@ -77,8 +77,6 @@ parser.add_argument('--no-mixup-iter', type=int, default=800,
                     help='Disable mixup for the last few iterations.')
 
 # Output
-parser.add_argument('--log', action='store_true',
-                    help='Whether to log training details.')
 parser.add_argument('--save-folder', default='./weights/',
                     help='Location to save checkpoint models')
 parser.add_argument('--checkpoint-period', type=int, default=10000,
