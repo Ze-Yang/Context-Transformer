@@ -33,6 +33,9 @@ It can be flexibly embedded in the popular SSD-style detectors, which makes it a
 | [Kang2019](https://arxiv.org/pdf/1812.01866.pdf) | 33.9 | 30.1 | 40.6 |
 | ours | **44.2** | **36.3** | **40.8** |
 
+Note:
+- The results here is higher than that reported in the paper due to training strategy adjustment.
+
 
 ### License
 
