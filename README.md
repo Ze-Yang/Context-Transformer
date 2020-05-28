@@ -155,7 +155,8 @@ To pretrain RFBNet on VOC split1 (simply change `--split` for other splits):
 python train.py --save-folder weights/VOC_split1_pretrain -d VOC -p 1 -max 50000 --steps 30000 40000 --checkpoint-period 4000 --warmup-iter 1000 --setting incre --split 1
 ```
 Note:
-- To ease your reproduce, feel free to download the above pretrained [RFBNet models](https://pan.baidu.com/s/1aW73KRm3anrX0ulcadQZMg) directly.
+- To ease your reproduce, feel free to download the above pretrained RFBNet models via [BaiduYun Driver](https://pan.baidu.com/s/1aW73KRm3anrX0ulcadQZMg) 
+or [OneDrive](https://entuedu-my.sharepoint.com/:f:/g/personal/ze001_e_ntu_edu_sg/Ep1kRewPKKJCi0hIrAcyRKsBKm4q78TdZDh_O-cwfeQs-A?e=X9uk5r) directly.
 
 ### Phase 2
 #### Transfer Setting
