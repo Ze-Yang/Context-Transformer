@@ -17,21 +17,32 @@ It can be flexibly embedded in the popular SSD-style detectors, which makes it a
 | [Prototype](https://github.com/ShaoqingRen/faster_rcnn) | 22.8 | 39.8 |
 | [Imprinted](http://pjreddie.com/darknet/yolo/) | 24.5 | 40.9 |
 | [Non-local](https://github.com/daijifeng001/R-FCN)| 25.2 | 41.0 |
+| Baseline | 21.5 | 39.4 |
 | Ours | **27.0** | **43.8** |
 
+*News*: We now support instance shot for COCO60 to VOC20 transfer setting, denoted by suffix `-IS` below.
+
+| Method |  *1shot* | *5shot* |
+|:-------|:-----:|:-------:|
+| Baseline-IS | 19.2 | 35.7 |
+| Ours-IS | **27.1** | **40.4** |
+
+Note:
+- The instance shots are kept the same as incremental setting, which is different from the image shots we originally used in transfer setting.
+Therefore, it's possible that the 1-shot result of Ours-IS (27.1) is comparable to Ours (27.0).
 
 ### Incremental Setting VOC15 to VOC20 (Novel Class *mAP*)
 | Method (*1-shot*) | *Split1* | *Split2* | *Split3* |
 |:-------|:-------:|:-----:|:-------:|
 | [Shmelkov2017](https://arxiv.org/pdf/1708.06977.pdf) | 23.9 | 19.2 | 21.4 |
 | [Kang2019](https://arxiv.org/pdf/1812.01866.pdf) | 14.8 | 15.7 | 19.2 |
-| ours | **39.8** | **32.5** | **34.0** |
+| Ours | **39.8** | **32.5** | **34.0** |
 
 | Method (*5-shot*) | *Split1* | *Split2* | *Split3* |
 |:-------|:-------:|:-----:|:-------:|
 | [Shmelkov2017](https://arxiv.org/pdf/1708.06977.pdf) | 38.8 | 32.5 | 31.8 |
 | [Kang2019](https://arxiv.org/pdf/1812.01866.pdf) | 33.9 | 30.1 | 40.6 |
-| ours | **44.2** | **36.3** | **40.8** |
+| Ours | **44.2** | **36.3** | **40.8** |
 
 Note:
 - The results here is higher than that reported in the paper due to training strategy adjustment.
