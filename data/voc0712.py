@@ -191,8 +191,9 @@ class VOCDetection(data.Dataset):
         self.mixup_args = None
         self.ids = list()
         self.split = 0 if args.setting == 'transfer' else args.split
-        self.setting = args.setting
-        self.phase = args.phase
+        self.setting = args.setting if hasattr(args, 'setting') else None
+        self.phase = args.phase if hasattr(args, 'phase') else None
+        self.instance_shot = args.instance_shot if hasattr(args, 'instance_shot') else None
 
         for (year, name) in image_sets:
             self._year = year
@@ -206,9 +207,16 @@ class VOCDetection(data.Dataset):
                     self.ids.append((rootpath, line.strip()))
             elif args.phase == 2:
                 if args.setting == 'transfer':
-                    for line in open(os.path.join(rootpath, 'ImageSets', 'Main',
-                                                  name + '_' + str(args.shot) + 'shot.txt')):
-                        self.ids.append((rootpath, line.strip()))
+                    if self.instance_shot:
+                        for cls in VOC_CLASSES[0][1:]:
+                            for line in open(
+                                    os.path.join(rootpath, 'ImageSets', 'Main', '1_box', cls + '.txt')
+                            ).readlines()[:args.shot]:
+                                self.ids.append((rootpath, line.strip()))
+                    else:
+                        for line in open(os.path.join(rootpath, 'ImageSets', 'Main',
+                                                      name + '_' + str(args.shot) + 'shot.txt')):
+                            self.ids.append((rootpath, line.strip()))
                 elif args.setting == 'incre':
                     for cls in VOC_CLASSES[args.split][1:]:
                         for line in open(
@@ -230,7 +238,7 @@ class VOCDetection(data.Dataset):
         if self.preproc is not None:
             img1, target1 = self.preproc(img1, target1)
 
-        if self.setting == 'incre' and self.phase == 2:
+        if self.phase == 2 and (self.setting == 'incre' or self.instance_shot):
             target1[1:, -1] = -1
 
         lambd = 1
@@ -256,7 +264,7 @@ class VOCDetection(data.Dataset):
         if self.preproc is not None:
             img2, target2 = self.preproc(img2, target2)
 
-        if self.setting == 'incre' and self.phase == 2:
+        if self.phase == 2 and (self.setting == 'incre' or self.instance_shot):
             target2[1:, -1] = -1
 
         # mixup two images

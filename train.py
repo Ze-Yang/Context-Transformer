@@ -51,7 +51,7 @@ parser.add_argument('--lr', '--learning-rate', type=float, default=4e-3,
 parser.add_argument('--steps', type=int, nargs='+', default=[120000, 150000],
                     help='Learning rate decrease steps.')
 parser.add_argument('--warmup-iter', type=int, default=5000,
-                    help='Batch size for training')
+                    help='Number of warmup iterations')
 parser.add_argument('--ngpu', type=int, default=4, help='gpus')
 parser.add_argument('--num-workers', type=int, default=4,
                     help='Number of workers used in dataloading')
@@ -68,6 +68,8 @@ parser.add_argument('--load-file', default=None,
 parser.add_argument('--resume', action='store_true',
                     help='Whether resume from the last checkpoint.'
                          'If True, no need to specify --load-file.')
+parser.add_argument('-is', '--instance-shot', action='store_true',
+                    help='If True, instance shot will be applied for transfer setting.')
 
 # TODO
 # Mixup
@@ -89,7 +91,7 @@ if not os.path.exists(args.save_folder):
 logger = setup_logger(args.save_folder)
 
 if args.dataset == 'VOC':
-    if args.setting == 'incre' and args.phase == 2:
+    if args.phase == 2 and (args.setting == 'incre' or args.instance_shot):
         train_sets = [('2007', 'trainval')]
     else:
         train_sets = [('2007', 'trainval'), ('2012', 'trainval')]
