@@ -1,12 +1,12 @@
 # Context-Transformer: Tackling Object Confusion for Few-Shot Detection
 
-By Ze Yang, Yali Wang, Xianyu Chen, Jianzhuang Liu, Yu Qiao.
+[![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/Ze-Yang/Context-Transformer.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/Ze-Yang/Context-Transformer/context:python)
 
-
+This repository contains the official implementation of the AAAI 2020 paper [Context-Transformer: Tackling Object Confusion for Few-Shot Detection](https://arxiv.org/pdf/2003.07304.pdf).
 
 ## Introduction
 To tackle the object confusion problem in few-shot detection, we propose a novel Context-Transformer within a concise deep transfer framework. Specifically, Context-Transformer can effectively leverage source-domain object knowledge as guidance, and automatically formulate relational context clues to enhance the detector's generalization capcity to the target domain.
-It can be flexibly embedded in the popular SSD-style detectors, which makes it a plug-and-play module for end-to-end few-shot learning. For more details, please refer to our [AAAI paper](https://arxiv.org/pdf/2003.07304.pdf).
+It can be flexibly embedded in the popular SSD-style detectors, which makes it a plug-and-play module for end-to-end few-shot learning. For more details, please refer to our [original paper](https://arxiv.org/pdf/2003.07304.pdf).
 
 <p align=center><img width="80%" src="doc/Motivation.png"/></p>
 
