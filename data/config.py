@@ -1,5 +1,8 @@
 # config.py
 
+__all__ = ['VOCroot', 'COCOroot', 'VOC_300', 'VOC_SSD_300', 'VOC_512', 'COCO_300',
+           'COCO_SSD_300', 'COCO_512', 'COCO_mobile_300']
+
 VOCroot = "data/VOCdevkit"  # path to VOCdevkit root dir
 COCOroot = "data/COCO"      # path to COCO root dir
 

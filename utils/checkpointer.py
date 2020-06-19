@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from termcolor import colored
 from torch.nn.parallel import DataParallel, DistributedDataParallel
-from typing import Any, Dict, List
+from typing import Any
 from collections import defaultdict, OrderedDict
 
 
@@ -56,7 +56,7 @@ class Checkpointer(object):
         if not self.save_dir or not self.save_to_disk:
             return
 
-        data = {}
+        data = dict()
         data["model"] = self.model.state_dict()
         for key, obj in self.checkpointables.items():
             data[key] = obj.state_dict()

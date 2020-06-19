@@ -12,48 +12,47 @@ import os.path
 import sys
 import torch
 import torch.utils.data as data
-import torchvision.transforms as transforms
 from PIL import Image
 import cv2
 import numpy as np
 from .voc_eval import voc_eval
+
 if sys.version_info[0] == 2:
     import xml.etree.cElementTree as ET
 else:
     import xml.etree.ElementTree as ET
 
-
 VOC_CLASSES = dict()
 VOC_CLASSES[0] = ('__background__',
-    'aeroplane', 'bicycle', 'bird', 'boat',
-    'bottle', 'bus', 'car', 'cat', 'chair',
-    'cow', 'diningtable', 'dog', 'horse',
-    'motorbike', 'person', 'pottedplant',
-    'sheep', 'sofa', 'train', 'tvmonitor')
+                  'aeroplane', 'bicycle', 'bird', 'boat',
+                  'bottle', 'bus', 'car', 'cat', 'chair',
+                  'cow', 'diningtable', 'dog', 'horse',
+                  'motorbike', 'person', 'pottedplant',
+                  'sheep', 'sofa', 'train', 'tvmonitor')
 
 # for data split 1
 VOC_CLASSES[1] = ('__background__',
-    'aeroplane', 'bicycle', 'boat', 'bottle',
-    'car', 'cat', 'chair', 'diningtable',
-    'dog', 'horse', 'person', 'pottedplant',
-    'sheep', 'train', 'tvmonitor', 'bird',
-    'bus', 'cow', 'motorbike', 'sofa')
+                  'aeroplane', 'bicycle', 'boat', 'bottle',
+                  'car', 'cat', 'chair', 'diningtable',
+                  'dog', 'horse', 'person', 'pottedplant',
+                  'sheep', 'train', 'tvmonitor', 'bird',
+                  'bus', 'cow', 'motorbike', 'sofa')
 
 # for data split 2
 VOC_CLASSES[2] = ('__background__',
-    'bicycle', 'bird', 'boat', 'bus',
-    'car', 'cat', 'chair', 'diningtable',
-    'dog', 'motorbike', 'person', 'pottedplant',
-    'sheep', 'train', 'tvmonitor', 'aeroplane',
-    'bottle', 'cow', 'horse', 'sofa')
+                  'bicycle', 'bird', 'boat', 'bus',
+                  'car', 'cat', 'chair', 'diningtable',
+                  'dog', 'motorbike', 'person', 'pottedplant',
+                  'sheep', 'train', 'tvmonitor', 'aeroplane',
+                  'bottle', 'cow', 'horse', 'sofa')
 
 # for data split 3
 VOC_CLASSES[3] = ('__background__',
-    'aeroplane', 'bicycle', 'bird', 'bottle',
-    'bus', 'car', 'chair', 'cow',
-    'diningtable', 'dog', 'horse', 'person',
-    'pottedplant', 'train', 'tvmonitor', 'boat',
-    'cat', 'motorbike', 'sheep', 'sofa')
+                  'aeroplane', 'bicycle', 'bird', 'bottle',
+                  'bus', 'car', 'chair', 'cow',
+                  'diningtable', 'dog', 'horse', 'person',
+                  'pottedplant', 'train', 'tvmonitor', 'boat',
+                  'cat', 'motorbike', 'sheep', 'sofa')
 
 # for making bounding boxes pretty
 COLORS = ((255, 0, 0, 128), (0, 255, 0, 128), (0, 0, 255, 128),
@@ -61,7 +60,6 @@ COLORS = ((255, 0, 0, 128), (0, 255, 0, 128), (0, 0, 255, 128),
 
 
 class VOCSegmentation(data.Dataset):
-
     """VOC Segmentation Dataset Object
     input and target are both images
 
@@ -115,7 +113,6 @@ class VOCSegmentation(data.Dataset):
 
 
 class AnnotationTransform(object):
-
     """Transforms a VOC annotation into a Tensor of bbox coords and label index
     Initilized with a dictionary lookup of classnames to indexes
 
@@ -163,7 +160,6 @@ class AnnotationTransform(object):
 
 
 class VOCDetection(data.Dataset):
-
     """VOC Detection Dataset Object
 
     input is image, target is annotation
@@ -338,7 +334,6 @@ class VOCDetection(data.Dataset):
         Return:
             tensorized version of img, squeezed
         '''
-        to_tensor = transforms.ToTensor()
         return torch.Tensor(self.pull_image(index)).unsqueeze_(0)
 
     def evaluate_detections(self, all_boxes, output_dir=None):
@@ -377,8 +372,8 @@ class VOCDetection(data.Dataset):
                     for k in range(dets.shape[0]):
                         f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
                                 format(index, dets[k, -1],
-                                dets[k, 0] + 1, dets[k, 1] + 1,
-                                dets[k, 2] + 1, dets[k, 3] + 1))
+                                       dets[k, 0] + 1, dets[k, 1] + 1,
+                                       dets[k, 2] + 1, dets[k, 3] + 1))
 
     def _do_python_eval(self, output_dir='output'):
         rootpath = os.path.join(self.root, 'VOC' + self._year)
@@ -406,8 +401,8 @@ class VOCDetection(data.Dataset):
 
             filename = self._get_voc_results_file_template().format(cls)
             rec, prec, ap = voc_eval(
-                                    filename, annopath, imagesetfile, cls, cachedir, ovthresh=0.5,
-                                    use_07_metric=use_07_metric)
+                filename, annopath, imagesetfile, cls, cachedir, ovthresh=0.5,
+                use_07_metric=use_07_metric)
             aps += [ap]
             print('AP for {} = {:.4f}'.format(cls, ap))
             if output_dir is not None:

@@ -1,5 +1,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-import itertools
 import torch
 from typing import Optional
 from torch.utils.data.sampler import Sampler

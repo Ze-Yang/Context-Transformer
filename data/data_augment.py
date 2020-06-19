@@ -12,6 +12,8 @@ import random
 import math
 from utils.box_utils import matrix_iou
 
+__all__ = ['preproc_for_test', 'preproc', 'BaseTransform']
+
 
 def _crop(image, boxes, labels, cls=None):
     height, width, _ = image.shape
