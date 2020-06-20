@@ -57,13 +57,12 @@ Context-Transformer is released under the MIT License (refer to the LICENSE file
 
 If you find Context-Transformer useful in your research, please consider citing:
 ```BibTeX
-@misc{yang2020contexttransformer,
-    title={Context-Transformer: Tackling Object Confusion for Few-Shot Detection},
-    author={Ze Yang and Yali Wang and Xianyu Chen and Jianzhuang Liu and Yu Qiao},
-    year={2020},
-    eprint={2003.07304},
-    archivePrefix={arXiv},
-    primaryClass={cs.CV}
+@inproceedings{yang2020context,
+  title={Context-Transformer: Tackling Object Confusion for Few-Shot Detection.},
+  author={Yang, Ze and Wang, Yali and Chen, Xianyu and Liu, Jianzhuang and Qiao, Yu},
+  booktitle={AAAI},
+  pages={12653--12660},
+  year={2020}
 }
 ```
 &nbsp;
