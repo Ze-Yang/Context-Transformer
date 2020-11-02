@@ -87,12 +87,13 @@ If you find Context-Transformer useful in your research, please consider citing:
     - termcolor
     - tensorboard
 
-        You can setup the entire environment simply using `conda`:
+        You can setup the entire environment simply with following lines:
 
         ```sh
         conda create -n CT python=3.6 && conda activate CT
         conda install pytorch torchvision cudatoolkit=10.0 -c pytorch
-        conda install cython opencv matplotlib tabulate termcolor tensorboard
+        conda install cython matplotlib tabulate termcolor tensorboard
+        pip install opencv-python
         ```
 
 - Compile the nms and coco tools:
