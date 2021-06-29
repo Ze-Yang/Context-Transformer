@@ -36,16 +36,6 @@ echo "removing tars ..."
 rm VOCtrainval_06-Nov-2007.tar
 rm VOCtest_06-Nov-2007.tar
 
-# Add ImageSets
-echo "navigating to ./VOCdevkit/VOC2007/ImageSets/ ..."
-cd ./VOCdevkit/VOC2007/ImageSets/
-echo "Downloading VOC2007 ImageSets ..."
-wget https://github.com/Ze-Yang/ImageSets/raw/master/Main2007.tar
-echo "Extracting VOC2007 ImageSets ..."
-tar -xvf Main2007.tar
-echo "removing tars ..."
-rm Main2007.tar
-
 end=`date +%s`
 runtime=$((end-start))
 
